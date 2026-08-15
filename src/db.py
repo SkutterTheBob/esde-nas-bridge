@@ -135,3 +135,21 @@ def rom_by_filename(conn: sqlite3.Connection, system: str, filename: str) -> sql
     return conn.execute(
         "SELECT * FROM roms WHERE system = ? AND rom_filename = ?", (system, filename)
     ).fetchone()
+
+
+def rom_filenames_missing_metadata(conn: sqlite3.Connection, system: str) -> set[str]:
+    """ROMs in `system` with no metadata row at all -- e.g. freshly scanned,
+    or previously pruned by `prune-removed` (which cascades metadata away)
+    and since reappeared on the NAS. Same "missing" definition as
+    scrape_system's only_missing, so a ROM flagged missing here would also
+    be picked up by a plain `scrape` run.
+    """
+    rows = conn.execute(
+        """
+        SELECT r.rom_filename FROM roms r
+        LEFT JOIN metadata m ON m.rom_id = r.id
+        WHERE r.system = ? AND m.rom_id IS NULL
+        """,
+        (system,),
+    ).fetchall()
+    return {row["rom_filename"] for row in rows}

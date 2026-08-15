@@ -115,6 +115,15 @@ add `--apply` to actually remove the stale entries — their DB row, stub
 file, and cached media — followed by `publish` to update `gamelist.xml` so
 ES-DE stops showing them.
 
+If a ROM reappears after being pruned (or is otherwise missing metadata --
+e.g. freshly scanned), you don't need a full `import-skraper` re-run to get
+its art/metadata back: `import-skraper <system> --missing-only` finds and
+re-imports only ROMs with no cached metadata yet, or target specific files
+directly with `--rom "Exact Filename.zip"` (repeatable). Both skip the full
+system pass entirely -- on a ~2200-ROM library, a full `import-skraper` run
+took ~18 minutes end-to-end, while a `--missing-only`/`--rom` run targeting
+one ROM took ~9 seconds.
+
 ### Adding a new machine (e.g. a second PC on the same NAS)
 
 Copy the repo over, then from the repo root on Windows: `.\setup.ps1` — it

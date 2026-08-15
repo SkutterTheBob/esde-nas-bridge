@@ -158,7 +158,17 @@ MEDIA_FOLDER_FALLBACK: list[tuple[str, str]] = [
 
 
 def import_skraper_export(config: Config, system_name: str, export_dir: str,
-                           progress_callback: ProgressCallback | None = None) -> dict:
+                           progress_callback: ProgressCallback | None = None,
+                           only_filenames: set[str] | None = None) -> dict:
+    """only_filenames, if given, restricts processing to just those ROM
+    filenames instead of the whole export -- skipped entries cost only a
+    cheap in-memory tag lookup, none of the DB writes or media file copies
+    (the actual expensive part, since skraper_imports typically points
+    straight at the NAS: each copy is a real SMB round trip). Useful for
+    re-importing a single ROM (e.g. after `prune-removed` cascaded its
+    cached metadata/media away, then it reappeared on the NAS) without
+    re-touching every other already-cached ROM in the system.
+    """
     export_path = Path(export_dir)
     gamelist_path = export_path / "gamelist.xml"
     if not gamelist_path.exists():
@@ -167,9 +177,10 @@ def import_skraper_export(config: Config, system_name: str, export_dir: str,
     tree = ET.parse(gamelist_path)
     root = tree.getroot()
     games = root.findall("game")
-    total = len(games)
+    total = len(games) if only_filenames is None else len(only_filenames)
 
     matched, unmatched = 0, 0
+    seen_filenames: set[str] = set()
     media_root = config.media_root / system_name
     media_root.mkdir(parents=True, exist_ok=True)
     # Built lazily, one iterdir() per folder for the whole run -- not once
@@ -177,12 +188,18 @@ def import_skraper_export(config: Config, system_name: str, export_dir: str,
     folder_index_cache: dict[Path, dict[str, Path]] = {}
 
     with connect(config.db_path) as conn:
-        for idx, game in enumerate(games, start=1):
+        for game in games:
             rom_path = game.findtext("path", default="").lstrip("./")
             filename = Path(rom_path).name
             if not filename:
                 continue
 
+            if only_filenames is not None:
+                if filename not in only_filenames:
+                    continue
+                seen_filenames.add(filename)
+
+            idx = len(seen_filenames) if only_filenames is not None else matched + unmatched + 1
             if progress_callback:
                 progress_callback(idx, total, filename)
 
@@ -228,11 +245,15 @@ def import_skraper_export(config: Config, system_name: str, export_dir: str,
             # look for a same-named file under media/<folder>/ directly.
             _scan_media_folders(conn, rom["id"], filename, export_path, media_root,
                                  skip_kinds=found_kinds, folder_index_cache=folder_index_cache,
-                                 config=config, on_copy=_on_copy)
+                                 config=config, on_copy=_on_copy,
+                                 prefer_direct_probe=only_filenames is not None)
 
             matched += 1
 
-    return {"matched": matched, "unmatched": unmatched}
+    result = {"matched": matched, "unmatched": unmatched}
+    if only_filenames is not None:
+        result["not_in_export"] = sorted(only_filenames - seen_filenames)
+    return result
 
 
 def _copy_media(conn, rom_id: int, kind: str, src: Path, media_root: Path, rom_filename: str,
@@ -275,11 +296,27 @@ def _build_folder_index(folder_path: Path, extensions: tuple[str, ...]) -> dict[
     return index
 
 
+def _probe_file(folder_path: Path, stem: str, extensions: tuple[str, ...]) -> Path | None:
+    """Direct existence check for `<stem><ext>`, one extension at a time --
+    a handful of stats instead of listing the whole folder. Cheap when only
+    a few ROMs are being processed (see `only_filenames` in
+    import_skraper_export), but WON'T find hash-suffixed filenames (see
+    _build_folder_index) since those aren't a plain `<stem><ext>` match --
+    callers should fall back to the full index on a miss.
+    """
+    for ext in extensions:
+        candidate = folder_path / f"{stem}{ext}"
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def _scan_media_folders(conn, rom_id: int, rom_filename: str, export_path: Path,
                          media_root: Path, skip_kinds: set[str],
                          folder_index_cache: dict[Path, dict[str, Path]],
                          config: Config,
-                         on_copy: Callable[[str, str], None] | None = None) -> None:
+                         on_copy: Callable[[str, str], None] | None = None,
+                         prefer_direct_probe: bool = False) -> None:
     stem = Path(rom_filename).stem
     media_dir = export_path / "media"
     if not media_dir.exists():
@@ -299,10 +336,20 @@ def _scan_media_folders(conn, rom_id: int, rom_filename: str, export_path: Path,
         else:
             extensions = IMAGE_EXTENSIONS
 
-        if folder_path not in folder_index_cache:
-            folder_index_cache[folder_path] = _build_folder_index(folder_path, extensions)
+        match: Path | None = None
+        # Targeted (--rom) imports: a few stats beats listing a folder that
+        # might have thousands of entries, just to look up one ROM. Only
+        # falls back to the full index (which also catches hash-suffixed
+        # filenames a direct probe can't) on a miss, or if this run is
+        # already processing enough ROMs that indexing-once pays for itself.
+        if prefer_direct_probe and folder_path not in folder_index_cache:
+            match = _probe_file(folder_path, stem, extensions)
 
-        match = folder_index_cache[folder_path].get(stem)
+        if match is None:
+            if folder_path not in folder_index_cache:
+                folder_index_cache[folder_path] = _build_folder_index(folder_path, extensions)
+            match = folder_index_cache[folder_path].get(stem)
+
         if match is not None:
             _copy_media(conn, rom_id, kind, match, media_root, rom_filename, on_copy=on_copy)
             skip_kinds.add(kind)

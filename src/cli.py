@@ -1,7 +1,8 @@
 """Command-line entrypoint.
 
     python -m src.cli scan [--system NAME] [--checksums]
-    python -m src.cli import-skraper <system>
+    python -m src.cli import-skraper <system> [--rom FILENAME ...] [--missing-only]
+                                                   # omit both to import the whole export
     python -m src.cli scrape <system> [--all]
     python -m src.cli write-stubs [--system NAME]
     python -m src.cli write-gamelists [--system NAME]
@@ -26,7 +27,7 @@ from pathlib import Path
 import click
 
 from .config import load_config
-from .db import connect, init_db
+from .db import connect, init_db, rom_filenames_missing_metadata
 from .es_systems_generator import generate_all, write_custom_systems
 from .gamelist_writer import write_all, write_gamelist
 from .indexer import find_stale_roms, scan_all, scan_system
@@ -109,7 +110,14 @@ def scan(config_path, system, checksums):
 @cli.command("import-skraper")
 @CONFIG_OPTION
 @click.argument("system")
-def import_skraper(config_path, system):
+@click.option("--rom", "roms", multiple=True,
+              help="Only (re-)import this ROM filename, e.g. --rom \"Chrono Trigger (USA).zip\". "
+                   "Repeatable. Default: the whole system's export.")
+@click.option("--missing-only", is_flag=True,
+              help="Only (re-)import ROMs that have no metadata yet in the local cache "
+                   "(e.g. freshly scanned, or reappeared after prune-removed cascaded their "
+                   "old metadata/media away) -- no need to know filenames. Combines with --rom.")
+def import_skraper(config_path, system, roms, missing_only):
     """Merge an existing Skraper export into the cache for one system."""
     config = load_config(config_path)
     export_dir = config.skraper_imports.get(system)
@@ -119,10 +127,26 @@ def import_skraper(config_path, system):
         )
 
     progress, is_tty = _make_progress_printer()
-    result = import_skraper_export(config, system, export_dir, progress_callback=progress)
+    only_filenames = set(roms) if roms else None
+    if missing_only:
+        with connect(config.db_path) as conn:
+            missing = rom_filenames_missing_metadata(conn, system)
+        only_filenames = missing if only_filenames is None else only_filenames | missing
+        if not only_filenames:
+            click.echo(f"{system}: nothing missing metadata -- every indexed ROM already has some.")
+            return
+    result = import_skraper_export(
+        config, system, export_dir, progress_callback=progress, only_filenames=only_filenames
+    )
     if is_tty():
         click.echo()
     click.echo(f"{system}: matched {result['matched']}, unmatched {result['unmatched']}")
+    not_in_export = result.get("not_in_export")
+    if not_in_export:
+        click.echo(
+            "Not found in this Skraper export (check spelling, or it was never scraped): "
+            + ", ".join(not_in_export)
+        )
 
 
 @cli.command()
