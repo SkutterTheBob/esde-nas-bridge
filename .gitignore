@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+config/config.yaml
+cache/
+*.db
+es_systems_generated.xml
+launch_wrapper_errors.log
+test_shell_launch.py

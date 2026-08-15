@@ -1,0 +1,55 @@
+<!--
+  Example entry for ES-DE's es_systems.xml (Windows).
+
+  Key points:
+    - <path> points at roms_stub_root/<system> -- the local zero-byte
+      placeholder files (see rom_stubs.py), NOT the NAS and NOT the
+      gamelists folder. ES-DE needs real files here to enumerate the
+      system at all; it never reads them beyond checking they exist.
+    - gamelist.xml (text metadata) and downloaded_media (artwork) should
+      already be sitting directly in ES-DE's own real folders per
+      config.yaml's gamelists_root/media_root, so ES-DE picks them up
+      exactly like a normal scrape -- no extra configuration needed here
+      for either.
+    - <command> calls launch.bat (repo root), which sets the working
+      directory correctly before invoking Python -- ES-DE launches
+      commands with its OWN working directory, not this repo's, which
+      otherwise breaks both `python -m src.launch_wrapper` (needs the repo
+      root on sys.path) and anything resolved relative to the current
+      directory. Symptom if this isn't handled: a console window flashes
+      and closes, ES-DE just returns to its menu with no visible error.
+    - launch_wrapper only uses %ROM%'s filename, looking up the real NAS
+      path in the local database -- it does not trust this path beyond that.
+    - %ROM% does NOT need extra quoting -- ES-DE's own substitution already
+      wraps it in quotes when the path contains spaces/parens. Confirmed
+      directly from es_log.txt: adding another layer of quotes here
+      produced a doubled `""...""` in the expanded command, which corrupts
+      Windows' argument parsing (the quoted portion effectively unquotes in
+      the middle, splitting the path into separate arguments at every
+      space). Symptom was a console flash, immediate return to ES-DE's
+      menu, and no error logged -- launch_wrapper received a truncated
+      filename fragment, cleanly reported "not found", and exited via its
+      normal handled-error path (which by design doesn't write to
+      launch_wrapper_errors.log, since that's reserved for unexpected
+      crashes).
+    - The quotes around the launch.bat PATH (not %ROM%) are just normal
+      quoting for a path that might contain spaces -- we control that part
+      of the command line, unlike %ROM%, so it's safe to quote directly.
+    - Adjust the repo path for your install location.
+-->
+<system>
+  <name>snes</name>
+  <fullname>Super Nintendo</fullname>
+  <path>C:\path\to\esde-nas-bridge\cache\roms_stub\snes</path>
+  <extension>.sfc .smc .zip</extension>
+  <command>"C:\path\to\esde-nas-bridge\launch.bat" snes %ROM%</command>
+  <platform>snes</platform>
+  <theme>snes</theme>
+</system>
+
+<!--
+  Linux/Mac equivalent for reference:
+  <path>/path/to/esde-nas-bridge/cache/roms_stub/snes</path>
+  <command>"/path/to/esde-nas-bridge/launch.sh" snes %ROM%</command>
+  (launch.sh needs execute permission: chmod +x launch.sh)
+-->

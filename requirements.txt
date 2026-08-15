@@ -1,0 +1,5 @@
+click>=8.1
+PyYAML>=6.0
+requests>=2.31
+# Optional, only needed for on-demand SMB mounting without a system mount utility:
+# smbprotocol>=1.13

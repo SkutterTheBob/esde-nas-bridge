@@ -1,0 +1,147 @@
+# Copy this to config.yaml and edit.
+#
+# IMPORTANT -- required es_settings.xml changes for this design to actually
+# result in zero-NAS-touch browsing (edit the file directly, or via ES-DE's
+# UI where each setting is exposed):
+#   ParseGamelistOnly = true     -- skips ES-DE's own filesystem scan entirely
+#                                    and trusts gamelist.xml completely. This
+#                                    is what actually makes local caching work
+#                                    (roms_stub_root below is now just cheap
+#                                    insurance, not load-bearing).
+#   LegacyGamelistFileLocation = false (i.e. remove/default it) -- if you
+#                                    previously set this to true to read
+#                                    gamelist.xml from the NAS directly,
+#                                    turn it back off. With it off, ES-DE
+#                                    reads from its own centralized local
+#                                    gamelists folder -- exactly where
+#                                    gamelists_root below writes to.
+#   MediaDirectory = (remove/default it) -- if you previously pointed this at
+#                                    a NAS path (e.g. %ROMPATH%/_media), unset
+#                                    it so ES-DE falls back to its own local
+#                                    downloaded_media folder -- exactly where
+#                                    media_root below writes to.
+# Any NAS-side symlink trick you built for the media folder mismatch (e.g.
+# system/_media -> system/media) can stay in place; it's just unused once
+# ES-DE stops being pointed at the NAS for media.
+
+cache:
+  db_path: '.\cache\library.db'
+  # Point these at ES-DE's REAL folders directly -- no separate publish
+  # step needed. Find your ES-DE home folder first (check es_log.txt for
+  # the path it's using, since portable installs vary). Typically
+  # %USERPROFILE%\ES-DE on a non-portable install.
+  media_root: 'C:\Users\YOURNAME\ES-DE\downloaded_media'
+  gamelists_root: 'C:\Users\YOURNAME\ES-DE\gamelists'
+  # Local placeholder ROM files -- see rom_stubs.py. Not load-bearing once
+  # ParseGamelistOnly=true is set (see note above), but cheap to keep
+  # writing as a fallback in case that setting ever misbehaves. Point
+  # es_systems.xml's <path> at this folder either way, NOT the NAS.
+  roms_stub_root: '.\cache\roms_stub'
+  # Optional: only needed if gamelists_root isn't exactly "<ES-DE home>/
+  # gamelists" -- used to find custom_systems/es_systems.xml for
+  # `generate-es-systems`. Auto-derived from gamelists_root's parent
+  # otherwise, which holds for every config in this project so far.
+  # es_de_home: 'C:\Users\YOURNAME\ES-DE'
+  # Optional: restrict import-skraper/scrape to only these media types,
+  # to save disk space on a large library (videos and manuals are usually
+  # the biggest). Omit this key entirely to cache everything (the default).
+  # Set to an empty list for ROMs-only (metadata cached, no art/video/manuals
+  # at all). Easiest way to manage this: `python -m src.cli configure-media`
+  # for an interactive picker instead of hand-editing this list.
+  # enabled_media_types: [covers, screenshots, marquees, titlescreens]
+
+nas:
+  # One entry per NAS source. "mode" controls when/whether we touch the network.
+  - name: main-nas
+    mode: mapped              # Y: is already mapped via Windows (reconnect at sign-in) --
+    root: 'Y:\roms'           # no mount code runs at all; Windows lazily reconnects on access.
+
+  # Example only -- not needed for your current setup, since main-nas above
+  # covers it. Kept here in case you later want the drive to connect only
+  # around a launch instead of staying mapped all the time. On Windows this
+  # uses `net use` against a spare drive letter. Strongly prefer registering
+  # the share's credentials in Windows Credential Manager first
+  # (`cmdkey /add:nas-host /user:youruser /pass:yourpass`, run once) so no
+  # credentials need to live in this file or env vars at all.
+  # - name: backup-nas
+  #   mode: on_demand
+  #   root: 'Z:\'
+  #   mount:
+  #     type: smb
+  #     share: '\\nas-host\backup-roms'
+  #     mount_point: 'Z:'
+  #     # Only needed if you're not using Credential Manager:
+  #     # username_env: NAS_USER
+  #     # password_env: NAS_PASSWORD
+  #     timeout_seconds: 15
+
+systems:
+  snes:
+    nas_source: main-nas
+    subdir: "snes"
+    extensions: [".sfc", ".smc", ".zip"]
+    retroarch_core: "snes9x_libretro"
+    # Optional: only needed if the built-in name->id table (screenscraper_ids.py)
+    # doesn't already cover this system name, or you want to override it.
+    # screenscraper_id: 4
+  genesis:
+    nas_source: main-nas
+    subdir: "genesis"
+    extensions: [".md", ".bin", ".zip"]
+    retroarch_core: "genesis_plus_gx_libretro"
+
+  # Example: standalone (non-RetroArch) emulator instead of a libretro core --
+  # set EXACTLY ONE of `retroarch_core` or `emulator` per system, never both.
+  # {rom} in `args` gets replaced with the resolved absolute ROM path (don't
+  # add your own quotes around {rom} in the template -- it's substituted as
+  # one complete argument regardless of spaces in the actual path).
+  # The flags below are confirmed working (2026-08-13): launches directly
+  # into the game with no launcher screen, exits cleanly with no lingering
+  # process.
+  # psx:
+  #   nas_source: main-nas
+  #   subdir: "psx"
+  #   extensions: [".chd", ".cue"]
+  #   emulator:
+  #     binary: 'C:\Emulators\DuckStation\duckstation-qt-x64-ReleaseLTCG.exe'
+  #     args: '-nogui -batch "{rom}"'
+  #     # Only needed if launching fails with PermissionError/WinError 5
+  #     # (Access is denied) despite the exe running fine manually --
+  #     # confirmed real fix on real hardware for DuckStation specifically.
+  #     # Root cause not fully understood (ruled out elevation on both
+  #     # sides, Windows Defender, and testing the wrong binary); routing
+  #     # through cmd.exe as the immediate parent process empirically
+  #     # resolved it. Leave unset/false unless you hit this exact error.
+  #     use_shell: true
+
+skraper_imports:
+  # Since Y: is already mapped, point straight at your NAS-resident Skraper
+  # output per system -- no separate export/copy step needed. This read is
+  # itself a deliberate, occasional network touch, same as `scan`, separate
+  # from ES-DE's normal browsing which only ever reads the local copy this
+  # tool produces.
+  snes: 'Y:\roms\snes'
+  genesis: 'Y:\roms\genesis'
+
+scraper:
+  # skraper_import is the primary source now that Skraper already covers
+  # your library at scale -- api fills in only what Skraper's export didn't.
+  priority: [skraper_import, api]
+  api:
+    provider: screenscraper
+    softname: "esde-nas-bridge"
+    # "Developer" credentials -- required, and separate from your personal
+    # login below. Request one at:
+    # https://www.screenscraper.fr/forumsujets.php?frub=12
+    # Never commit real credentials -- these point at environment variable
+    # names, not the values themselves.
+    devid_env: SCREENSCRAPER_DEVID
+    devpassword_env: SCREENSCRAPER_DEVPASSWORD
+    # Personal account login (optional, but raises your quota/thread limit
+    # above the anonymous "leecher" tier).
+    username_env: SCREENSCRAPER_USER
+    password_env: SCREENSCRAPER_PASS
+
+retroarch:
+  binary: 'C:\RetroArch-Win64\retroarch.exe'   # or '/usr/bin/retroarch' on Linux/Mac
+  core_dir: 'C:\RetroArch-Win64\cores'          # or '/usr/lib/libretro' on Linux/Mac
