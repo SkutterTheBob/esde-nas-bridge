@@ -78,6 +78,20 @@ def _make_progress_printer(throttle: int = 100):
     return _progress, (lambda: is_tty)
 
 
+def _validate_system(config, system_name: str) -> None:
+    """Raises a clean error for an unconfigured system name instead of
+    letting a raw KeyError (from config.systems[name] deep in indexer.py/
+    api_scraper.py/etc.) surface as a Python traceback. Every command that
+    accepts a system name from the user should call this right after
+    loading config, before doing anything else with that name.
+    """
+    if system_name not in config.systems:
+        available = ", ".join(sorted(config.systems)) or "(none configured yet -- run `add-system`)"
+        raise click.ClickException(
+            f"No such system '{system_name}' in config.yaml. Configured systems: {available}"
+        )
+
+
 @click.group()
 def cli():
     pass
@@ -90,6 +104,8 @@ def cli():
 def scan(config_path, system, checksums):
     """Index ROMs from the NAS into the local cache."""
     config = load_config(config_path)
+    if system:
+        _validate_system(config, system)
     init_db(config.db_path)
 
     progress, is_tty = _make_progress_printer()
@@ -120,6 +136,7 @@ def scan(config_path, system, checksums):
 def import_skraper(config_path, system, roms, missing_only):
     """Merge an existing Skraper export into the cache for one system."""
     config = load_config(config_path)
+    _validate_system(config, system)
     export_dir = config.skraper_imports.get(system)
     if not export_dir:
         raise click.ClickException(
@@ -156,6 +173,7 @@ def import_skraper(config_path, system, roms, missing_only):
 def scrape(config_path, system, rescrape_all):
     """Fill in metadata/media gaps via the configured API scraper."""
     config = load_config(config_path)
+    _validate_system(config, system)
     progress, is_tty = _make_progress_printer()
 
     try:
@@ -182,6 +200,8 @@ def write_stubs(config_path, system):
     the system without touching the NAS. Never executed -- launch_wrapper
     resolves the real file by filename lookup."""
     config = load_config(config_path)
+    if system:
+        _validate_system(config, system)
     progress, is_tty = _make_progress_printer()
 
     if system:
@@ -206,6 +226,7 @@ def write_gamelists(config_path, system):
     this needs no separate publish step."""
     config = load_config(config_path)
     if system:
+        _validate_system(config, system)
         path = write_gamelist(config, system)
         click.echo(f"{system}: wrote {path}")
     else:
@@ -220,6 +241,8 @@ def publish(config_path, system):
     """Convenience: write-stubs + write-gamelists together. Run this after
     scan/import-skraper/scrape to make new/updated ROMs show up in ES-DE."""
     config = load_config(config_path)
+    if system:
+        _validate_system(config, system)
     progress, is_tty = _make_progress_printer()
     systems = [system] if system else list(config.systems)
     for name in systems:
@@ -241,6 +264,8 @@ def sync(config_path, system, checksums, skip_skraper):
     library or Skraper export changes -- no need to remember the individual
     steps or their order."""
     config = load_config(config_path)
+    if system:
+        _validate_system(config, system)
     init_db(config.db_path)
     progress, is_tty = _make_progress_printer()
     systems = [system] if system else list(config.systems)
@@ -604,6 +629,8 @@ def clean_media(config_path, system, apply_changes):
     this project's other destructive-operation convention (see
     rom_cleanup.py's --apply flag) -- pass --apply to actually delete."""
     config = load_config(config_path)
+    if system:
+        _validate_system(config, system)
     if config.enabled_media_types is None:
         click.echo("enabled_media_types isn't restricted (all types currently allowed) -- nothing to clean.")
         click.echo("Run `configure-media` first to narrow your selection, then re-run this.")
@@ -673,6 +700,8 @@ def prune_removed(config_path, system, apply_changes):
     (an interrupted/partial scan could make still-present files look
     stale). Run `publish` afterward to update gamelist.xml."""
     config = load_config(config_path)
+    if system:
+        _validate_system(config, system)
     systems = [system] if system else list(config.systems)
     total = 0
 

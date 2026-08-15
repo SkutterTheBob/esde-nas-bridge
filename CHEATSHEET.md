@@ -272,3 +272,4 @@ Edit directly or via ES-DE's own settings UI where exposed.
 | A ROM removed/renamed on the NAS still shows in ES-DE | `scan` then `prune-removed --apply` then `publish` |
 | ROM back on the NAS but still missing art/metadata in ES-DE | `scan`, then `import-skraper <system> --missing-only`, then `publish` |
 | `add-system`/`configure-media` says it "couldn't safely auto-update config.yaml" | Your `config.yaml` doesn't match the expected structure for the surgical text edit — add the shown block by hand |
+| `No such system 'X' in config.yaml. Configured systems: ...` | That system hasn't been added yet — run `add-system` first |
