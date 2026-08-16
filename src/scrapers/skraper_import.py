@@ -40,6 +40,15 @@ importer works:
    this importer treats gamelist.xml as the primary source for metadata +
    media, and ALSO does a filename-convention sweep of media/ as a
    fallback/supplement for any media a game's XML entry didn't reference.
+   CONFIRMED (pcenginecd, real NAS export): within one of those folders,
+   media can ALSO be nested one level deeper under a per-game subfolder --
+   media/screenshots/Loom (USA)/Loom (USA).png -- rather than flat directly
+   under media/screenshots/, seen for every other system in the same
+   install (snes/genesis/pcengine). Apparently tied to whether the ROM
+   itself was scraped from inside its own subfolder (true for pcenginecd's
+   cue-in-a-folder layout) -- checked as a second, lower-priority
+   convention alongside the flat one, same "first found wins" approach as
+   the folder-name fallback list above.
 
 ES-DE's own downloaded_media vocabulary also includes a "custom" media type
 that neither Skraper nor ScreenScraper are currently known to populate here
@@ -201,6 +210,10 @@ def import_skraper_export(config: Config, system_name: str, export_dir: str,
     # per-disc <game> element seen for it. Populated as we go, consumed by
     # the .m3u fallback pass below.
     disc_matches: dict[str, ET.Element] = {}
+    # extension-stripped filename (lowercased), unmodified otherwise -> the
+    # first <game> element seen with that stem. Populated as we go, consumed
+    # by the extension-mismatch fallback pass below.
+    stem_matches: dict[str, ET.Element] = {}
 
     with connect(config.db_path) as conn:
         for game in games:
@@ -216,6 +229,7 @@ def import_skraper_export(config: Config, system_name: str, export_dir: str,
             # when a --rom/--missing-only run targets just the .m3u itself
             # (never one of its individual disc files by name).
             stem = Path(filename).stem
+            stem_matches.setdefault(stem.strip().lower(), game)
             base = _disc_base_stem(stem)
             if base != stem.strip().lower():
                 # This filename actually had a " (Disc N)" marker -- remember
@@ -277,6 +291,37 @@ def import_skraper_export(config: Config, system_name: str, export_dir: str,
                                     folder_index_cache, idx, total, progress_callback,
                                     prefer_direct_probe=only_filenames is not None,
                                     source_filename=disc_filename)
+                matched += 1
+
+        # Third pass: a ROM re-encoded to a different container after being
+        # scraped (most commonly .cue/.bin -> .chd, via chdman) keeps the
+        # same base title but no longer matches Skraper's <path> filename
+        # exactly -- e.g. our indexed "Loom (USA).chd" vs. Skraper's own
+        # "Loom (USA).cue". Still-unmatched ROMs get one more attempt here,
+        # purely by extension-stripped stem, before being left as-is.
+        if stem_matches:
+            missing = rom_filenames_missing_metadata(conn, system_name)
+            if only_filenames is not None:
+                missing &= only_filenames
+
+            for filename in sorted(missing):
+                game = stem_matches.get(Path(filename).stem.strip().lower())
+                if game is None:
+                    continue
+                rom = rom_by_filename(conn, system_name, filename)
+                if rom is None:
+                    continue
+
+                source_filename = Path(game.findtext("path", default="")).name
+                seen_filenames.add(filename)  # matched via fallback -- don't report as not-in-export
+
+                idx = matched + unmatched + 1
+                if progress_callback:
+                    progress_callback(idx, total, filename)
+                _apply_game_to_rom(conn, config, game, rom, filename, export_path, media_root,
+                                    folder_index_cache, idx, total, progress_callback,
+                                    prefer_direct_probe=only_filenames is not None,
+                                    source_filename=source_filename)
                 matched += 1
 
     result = {"matched": matched, "unmatched": unmatched}
@@ -363,6 +408,14 @@ def _build_folder_index(folder_path: Path, extensions: tuple[str, ...]) -> dict[
     plain filenames resolve to the same key, matched against the ROM's own
     plain stem either way. If a hash-suffixed and non-suffixed file somehow
     collide on the same normalized stem, the non-suffixed (exact) one wins.
+
+    Some Skraper exports (confirmed: pcenginecd, where each disc's own .cue
+    lives in its own folder) nest media under a per-game subfolder mirroring
+    the ROM's own folder structure -- "media/screenshots/Loom (USA)/Loom
+    (USA).png" -- instead of a flat file directly under media/<kind>/, seen
+    everywhere else in this same install (snes/genesis/pcengine all flat).
+    A directory entry is checked for a same-named file one level in as a
+    second, lower-priority convention.
     """
     index: dict[str, Path] = {}
     try:
@@ -371,11 +424,16 @@ def _build_folder_index(folder_path: Path, extensions: tuple[str, ...]) -> dict[
         return index
 
     for entry in entries:
-        if not entry.is_file() or entry.suffix.lower() not in extensions:
-            continue
-        normalized = _HASH_SUFFIX_RE.sub("", entry.stem)
-        if normalized not in index or entry.stem == normalized:
-            index[normalized] = entry
+        if entry.is_file() and entry.suffix.lower() in extensions:
+            normalized = _HASH_SUFFIX_RE.sub("", entry.stem)
+            if normalized not in index or entry.stem == normalized:
+                index[normalized] = entry
+        elif entry.is_dir():
+            for ext in extensions:
+                nested = entry / f"{entry.name}{ext}"
+                if nested.exists():
+                    index.setdefault(_HASH_SUFFIX_RE.sub("", entry.name), nested)
+                    break
 
     return index
 
@@ -384,14 +442,18 @@ def _probe_file(folder_path: Path, stem: str, extensions: tuple[str, ...]) -> Pa
     """Direct existence check for `<stem><ext>`, one extension at a time --
     a handful of stats instead of listing the whole folder. Cheap when only
     a few ROMs are being processed (see `only_filenames` in
-    import_skraper_export), but WON'T find hash-suffixed filenames (see
-    _build_folder_index) since those aren't a plain `<stem><ext>` match --
-    callers should fall back to the full index on a miss.
+    import_skraper_export), but WON'T find hash-suffixed filenames or the
+    nested-subfolder convention (see _build_folder_index) -- callers should
+    fall back to the full index on a miss.
     """
     for ext in extensions:
         candidate = folder_path / f"{stem}{ext}"
         if candidate.exists():
             return candidate
+    for ext in extensions:
+        nested = folder_path / stem / f"{stem}{ext}"
+        if nested.exists():
+            return nested
     return None
 
 

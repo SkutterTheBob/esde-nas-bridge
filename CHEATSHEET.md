@@ -280,6 +280,16 @@ Edit directly or via ES-DE's own settings UI where exposed.
   metadata/art for the `.m3u` (matched by base title once the "(Disc N)"
   marker is stripped) — just re-run `import-skraper <system>
   --missing-only` (or a full `import-skraper`/`sync`) followed by `publish`.
+- **A ROM re-encoded to a different container after being scraped** (most
+  commonly `.cue`/`.bin` → `.chd` via chdman) also showed its raw filename
+  — Skraper's `<game>` entry still points at the original extension (e.g.
+  `Loom (USA).cue`), which no longer matches the converted file's exact
+  name. `import-skraper` now also falls back to an extension-agnostic
+  stem match when the exact filename misses. Some Skraper exports also
+  nest that ROM's media one level deeper (`media/screenshots/Loom
+  (USA)/Loom (USA).png` instead of flat) — now checked as a second
+  convention too. Same fix: `import-skraper <system> --missing-only` then
+  `publish`.
 
 ## Troubleshooting quick hits
 
@@ -290,6 +300,7 @@ Edit directly or via ES-DE's own settings UI where exposed.
 | `scan`/`import-skraper` unexpectedly slow on a new PC | Check the SMB2 client-cache registry values (see gotchas) |
 | Game launches but ES-DE loses audio after | Switch RetroArch's audio driver to `sdl2` |
 | Multi-disc `.m3u` shows its raw filename, not the game title | `import-skraper <system> --missing-only` then `publish` — Skraper never scrapes the `.m3u` directly, now auto-matched to its disc files' title |
+| A `.chd` (or other converted ROM) shows its raw filename, not the game title | `import-skraper <system> --missing-only` then `publish` — Skraper's export still references the pre-conversion extension, now auto-matched by stem regardless of extension |
 | Standalone emulator: `WinError 5 Access is denied` | Set `use_shell: true` on that system's `emulator:` config |
 | A ROM removed/renamed on the NAS still shows in ES-DE | `scan` then `prune-removed --apply` then `publish` |
 | ROM back on the NAS but still missing art/metadata in ES-DE | `scan`, then `import-skraper <system> --missing-only`, then `publish` |
