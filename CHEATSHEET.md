@@ -59,7 +59,7 @@ NAS (Y:\roms\<system>\...)                    Local cache (SQLite + disk)
 | `configure-media` | Interactively choose which media types to cache |
 | `clean-media [--system NAME] [--apply]` | Delete cached media no longer in your `enabled_media_types` selection |
 | `add-system` | Interactively add a new system to `config.yaml` (auto-suggests file extensions for known system keys) |
-| `prune-removed [--system NAME] [--apply]` | Clean up entries for ROMs no longer found on the NAS |
+| `prune-removed [--system NAME] [--apply]` | Clean up entries for ROMs no longer found on the NAS (warns + confirms separately if any look stale only because an extension was removed from config, not because the file is actually gone) |
 | `reset-system <system> [--apply]` | Wipe ALL local cache (DB rows, stubs, media, gamelist.xml) for one system, unconditionally |
 
 All commands accept `--config PATH` (default `config/config.yaml`).
@@ -273,6 +273,14 @@ Edit directly or via ES-DE's own settings UI where exposed.
 - **Config values get one layer of wrapping quotes silently stripped** at
   load time — a real bug once, now normalized away automatically for every
   path-like field (not `emulator.args`).
+- **Removing an extension from a system's `extensions:` makes `scan`
+  silently stop seeing files with it** — not deleted, not renamed, just no
+  longer matched — which looks identical to a real NAS removal to
+  `prune-removed`. It now flags these separately (`[extension not in this
+  system's current config...]`) and requires an extra explicit confirmation
+  before `--apply` touches them, so a config edit can't accidentally wipe
+  the cached metadata/art for ROMs that are still sitting right there on
+  the NAS.
 - **Multi-disc `.m3u` playlists showed up in ES-DE with their raw filename**
   (e.g. "Xenogears (USA).m3u") instead of the scraped title — Skraper never
   writes a `<game>` entry for the `.m3u` itself, only for each disc file.
@@ -303,6 +311,7 @@ Edit directly or via ES-DE's own settings UI where exposed.
 | A `.chd` (or other converted ROM) shows its raw filename, not the game title | `import-skraper <system> --missing-only` then `publish` — Skraper's export still references the pre-conversion extension, now auto-matched by stem regardless of extension |
 | Standalone emulator: `WinError 5 Access is denied` | Set `use_shell: true` on that system's `emulator:` config |
 | A ROM removed/renamed on the NAS still shows in ES-DE | `scan` then `prune-removed --apply` then `publish` |
+| `prune-removed` warns a ROM's extension "not in this system's current config" | You likely removed that extension from `extensions:` — the file's probably still on the NAS; confirm before proceeding, or add the extension back and re-`scan` if not intended |
 | ROM back on the NAS but still missing art/metadata in ES-DE | `scan`, then `import-skraper <system> --missing-only`, then `publish` |
 | `add-system`/`configure-media` says it "couldn't safely auto-update config.yaml" | Your `config.yaml` doesn't match the expected structure for the surgical text edit — add the shown block by hand |
 | `No such system 'X' in config.yaml. Configured systems: ...` | That system hasn't been added yet — run `add-system` first |

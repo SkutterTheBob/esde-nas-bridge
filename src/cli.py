@@ -709,51 +709,94 @@ def prune_removed(config_path, system, apply_changes):
     fresh data; dry run by default, matching clean-media's convention,
     since this assumes the scan it's comparing against actually completed
     (an interrupted/partial scan could make still-present files look
-    stale). Run `publish` afterward to update gamelist.xml."""
+    stale). Run `publish` afterward to update gamelist.xml.
+
+    A ROM can also look "stale" here for a reason that has nothing to do
+    with the NAS: removing an extension from a system's `extensions:` in
+    config.yaml makes `scan` silently stop looking for files with that
+    extension at all -- not deleted, not renamed, just no longer matched --
+    which is indistinguishable from a real NAS removal by timestamp alone.
+    Flagged separately below and gated behind an extra confirmation before
+    --apply touches anything, since deleting the cached metadata/art for
+    ROMs that are still sitting right there on the NAS would be a real
+    loss, not a cleanup.
+    """
     config = load_config(config_path)
     if system:
         _validate_system(config, system)
     systems = [system] if system else list(config.systems)
-    total = 0
 
+    # (system_name, rom_row, is_config_drift) for every stale ROM, gathered
+    # up front so the confirmation gate below sees the full picture before
+    # anything actually gets deleted.
+    entries = []
     for name in systems:
         stale = find_stale_roms(config, name)
         if not stale:
             continue
 
+        configured_extensions = set(config.systems[name].extensions)
         click.echo(f"=== {name} ===")
         for rom in stale:
-            click.echo(f"  {rom['rel_path']}")
-
-            if apply_changes:
-                with connect(config.db_path) as conn:
-                    media_rows = conn.execute(
-                        "SELECT local_path FROM media WHERE rom_id = ?", (rom["id"],)
-                    ).fetchall()
-
-                stub_path = config.roms_stub_root / name / rom["rel_path"]
-                if stub_path.exists():
-                    stub_path.unlink()
-                for m in media_rows:
-                    p = Path(m["local_path"])
-                    if p.exists():
-                        p.unlink()
-
-                with connect(config.db_path) as conn:
-                    # Cascades to metadata + media DB rows automatically
-                    # (ON DELETE CASCADE, see db.py's schema).
-                    conn.execute("DELETE FROM roms WHERE id = ?", (rom["id"],))
-
-        total += len(stale)
+            is_drift = Path(rom["rel_path"]).suffix.lower() not in configured_extensions
+            entries.append((name, rom, is_drift))
+            flag = "  [extension not in this system's current config -- NOT confirmed missing from the NAS]" if is_drift else ""
+            click.echo(f"  {rom['rel_path']}{flag}")
 
     click.echo()
-    if total == 0:
+    if not entries:
         click.echo("Nothing stale -- every indexed ROM was found on the last scan.")
-    elif apply_changes:
-        click.echo(f"Removed {total} stale ROM(s) and their cached data.")
-        click.echo("Run `publish` to update gamelist.xml so ES-DE stops showing these.")
-    else:
-        click.echo(f"Would remove {total} stale ROM(s) -- re-run with --apply to actually delete.")
+        return
+
+    drift_entries = [e for e in entries if e[2]]
+    if drift_entries:
+        click.echo(
+            f"WARNING: {len(drift_entries)} of {len(entries)} flagged ROM(s) have an "
+            "extension no longer in their system's `extensions:` list in config.yaml -- "
+            "scan simply stopped looking for them, which looks identical to a real NAS "
+            "removal from a timestamp alone. They may still be sitting right there on the "
+            "NAS untouched (e.g. after editing `extensions:`, or converting/renaming files "
+            "to a format you haven't added to config.yaml yet). If that's not what you "
+            "intended, add the extension back, re-run `scan`, then `prune-removed` again --"
+            " they'll no longer show as stale."
+        )
+        for name, rom, _ in drift_entries:
+            click.echo(f"  {name}: {rom['rel_path']}")
+        click.echo()
+
+    if not apply_changes:
+        click.echo(f"Would remove {len(entries)} stale ROM(s) -- re-run with --apply to actually delete.")
+        return
+
+    if drift_entries and not click.confirm(
+        f"Proceed and remove all {len(entries)} flagged ROM(s) anyway, including the "
+        f"{len(drift_entries)} flagged above as possibly still present on the NAS?",
+        default=False,
+    ):
+        click.echo("Aborted -- nothing was removed.")
+        return
+
+    for name, rom, _ in entries:
+        with connect(config.db_path) as conn:
+            media_rows = conn.execute(
+                "SELECT local_path FROM media WHERE rom_id = ?", (rom["id"],)
+            ).fetchall()
+
+        stub_path = config.roms_stub_root / name / rom["rel_path"]
+        if stub_path.exists():
+            stub_path.unlink()
+        for m in media_rows:
+            p = Path(m["local_path"])
+            if p.exists():
+                p.unlink()
+
+        with connect(config.db_path) as conn:
+            # Cascades to metadata + media DB rows automatically (ON DELETE
+            # CASCADE, see db.py's schema).
+            conn.execute("DELETE FROM roms WHERE id = ?", (rom["id"],))
+
+    click.echo(f"Removed {len(entries)} stale ROM(s) and their cached data.")
+    click.echo("Run `publish` to update gamelist.xml so ES-DE stops showing these.")
 
 
 @cli.command("reset-system")
