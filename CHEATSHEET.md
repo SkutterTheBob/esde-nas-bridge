@@ -273,6 +273,13 @@ Edit directly or via ES-DE's own settings UI where exposed.
 - **Config values get one layer of wrapping quotes silently stripped** at
   load time — a real bug once, now normalized away automatically for every
   path-like field (not `emulator.args`).
+- **Multi-disc `.m3u` playlists showed up in ES-DE with their raw filename**
+  (e.g. "Xenogears (USA).m3u") instead of the scraped title — Skraper never
+  writes a `<game>` entry for the `.m3u` itself, only for each disc file.
+  `import-skraper` now automatically borrows the matching disc's
+  metadata/art for the `.m3u` (matched by base title once the "(Disc N)"
+  marker is stripped) — just re-run `import-skraper <system>
+  --missing-only` (or a full `import-skraper`/`sync`) followed by `publish`.
 
 ## Troubleshooting quick hits
 
@@ -282,6 +289,7 @@ Edit directly or via ES-DE's own settings UI where exposed.
 | `Y:` "path not found" but works when typed manually | Terminal is elevated — use a non-elevated one |
 | `scan`/`import-skraper` unexpectedly slow on a new PC | Check the SMB2 client-cache registry values (see gotchas) |
 | Game launches but ES-DE loses audio after | Switch RetroArch's audio driver to `sdl2` |
+| Multi-disc `.m3u` shows its raw filename, not the game title | `import-skraper <system> --missing-only` then `publish` — Skraper never scrapes the `.m3u` directly, now auto-matched to its disc files' title |
 | Standalone emulator: `WinError 5 Access is denied` | Set `use_shell: true` on that system's `emulator:` config |
 | A ROM removed/renamed on the NAS still shows in ES-DE | `scan` then `prune-removed --apply` then `publish` |
 | ROM back on the NAS but still missing art/metadata in ES-DE | `scan`, then `import-skraper <system> --missing-only`, then `publish` |

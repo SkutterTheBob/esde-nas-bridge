@@ -61,7 +61,7 @@ from pathlib import Path
 from typing import Callable
 
 from ..config import Config
-from ..db import connect, rom_by_filename, upsert_media, upsert_metadata
+from ..db import connect, rom_by_filename, rom_filenames_missing_metadata, upsert_media, upsert_metadata
 
 # (game_index, total_games, status_message) -- called once per game as it
 # starts processing, and again each time a media file actually gets copied.
@@ -83,6 +83,17 @@ MANUAL_EXTENSIONS = (".pdf", ".cbz", ".cbr")  # manual scans are virtually alway
 # with the same lookup -- harmless for folders that don't use it, since the
 # pattern just won't match anything there.
 _HASH_SUFFIX_RE = re.compile(r" [0-9A-Fa-f]{32}$")
+
+# Matches a trailing multi-disc marker, e.g. " (Disc 1)" or " [Disc 2]",
+# so a per-disc filename's stem can be reduced to its shared base title --
+# see the "multi-disc .m3u fallback" comment below in import_skraper_export
+# for why this exists.
+_DISC_SUFFIX_RE = re.compile(r"\s*[\(\[]disc\s*\d+[\)\]]\s*$", re.IGNORECASE)
+
+
+def _disc_base_stem(stem: str) -> str:
+    return _DISC_SUFFIX_RE.sub("", stem).strip().lower()
+
 
 # gamelist.xml tag -> our internal media "kind". Kind names match ES-DE's
 # own downloaded_media/<system>/<kind>/ folder names (see gamelist_writer.py
@@ -186,6 +197,10 @@ def import_skraper_export(config: Config, system_name: str, export_dir: str,
     # Built lazily, one iterdir() per folder for the whole run -- not once
     # per ROM, which would mean thousands of redundant NAS directory listings.
     folder_index_cache: dict[Path, dict[str, Path]] = {}
+    # base title (disc marker + extension stripped, lowercased) -> the first
+    # per-disc <game> element seen for it. Populated as we go, consumed by
+    # the .m3u fallback pass below.
+    disc_matches: dict[str, ET.Element] = {}
 
     with connect(config.db_path) as conn:
         for game in games:
@@ -193,6 +208,20 @@ def import_skraper_export(config: Config, system_name: str, export_dir: str,
             filename = Path(rom_path).name
             if not filename:
                 continue
+
+            # Always recorded, even for a game that only_filenames is about
+            # to skip below -- a cheap in-memory tag lookup, not the DB
+            # writes/media copies only_filenames exists to avoid, and the
+            # .m3u fallback pass needs every disc's entry available even
+            # when a --rom/--missing-only run targets just the .m3u itself
+            # (never one of its individual disc files by name).
+            stem = Path(filename).stem
+            base = _disc_base_stem(stem)
+            if base != stem.strip().lower():
+                # This filename actually had a " (Disc N)" marker -- remember
+                # it (first disc wins) as a fallback match for a same-titled
+                # .m3u playlist, which Skraper never scrapes as its own entry.
+                disc_matches.setdefault(base, game)
 
             if only_filenames is not None:
                 if filename not in only_filenames:
@@ -210,50 +239,105 @@ def import_skraper_export(config: Config, system_name: str, export_dir: str,
                 unmatched += 1
                 continue
 
-            upsert_metadata(
-                conn,
-                rom_id=rom["id"],
-                source="skraper_import",
-                title=game.findtext("name"),
-                description=game.findtext("desc"),
-                release_date=game.findtext("releasedate"),
-                developer=game.findtext("developer"),
-                publisher=game.findtext("publisher"),
-                genre=game.findtext("genre"),
-                players=game.findtext("players"),
-                rating=_safe_float(game.findtext("rating")),
-            )
-
-            def _on_copy(kind: str, dest_name: str, _idx=idx, _filename=filename) -> None:
-                if progress_callback:
-                    progress_callback(_idx, total, f"{_filename} -> {kind}/{dest_name}")
-
-            found_kinds: set[str] = set()
-            for tag, kind in MEDIA_TAGS.items():
-                if not config.is_media_enabled(kind):
-                    continue
-                rel = game.findtext(tag)
-                if not rel:
-                    continue
-                src = export_path / rel.lstrip("./")
-                if not src.exists():
-                    continue
-                if _copy_media(conn, rom["id"], kind, src, media_root, filename, on_copy=_on_copy):
-                    found_kinds.add(kind)
-
-            # Fallback: for any kind not already picked up from the XML,
-            # look for a same-named file under media/<folder>/ directly.
-            _scan_media_folders(conn, rom["id"], filename, export_path, media_root,
-                                 skip_kinds=found_kinds, folder_index_cache=folder_index_cache,
-                                 config=config, on_copy=_on_copy,
-                                 prefer_direct_probe=only_filenames is not None)
-
+            _apply_game_to_rom(conn, config, game, rom, filename, export_path, media_root,
+                                folder_index_cache, idx, total, progress_callback,
+                                prefer_direct_probe=only_filenames is not None)
             matched += 1
+
+        # Second pass: multi-disc games represented as .m3u playlists never
+        # appear as their own <game> entry in Skraper's export -- Skraper
+        # scrapes each disc file individually, matched by its own
+        # name/checksum. An .m3u's base title (filename minus extension)
+        # matches its disc files' base title once their " (Disc N)" marker
+        # is stripped, so borrow the first disc's metadata/media for the
+        # .m3u ROM ES-DE actually launches. Without this, the .m3u is left
+        # with no <name> at all, and ES-DE falls back to showing the raw
+        # filename -- extension, region tag, and all.
+        if disc_matches:
+            missing = rom_filenames_missing_metadata(conn, system_name)
+            m3u_candidates = {f for f in missing if f.lower().endswith(".m3u")}
+            if only_filenames is not None:
+                m3u_candidates &= only_filenames
+
+            for filename in sorted(m3u_candidates):
+                game = disc_matches.get(_disc_base_stem(Path(filename).stem))
+                if game is None:
+                    continue
+                rom = rom_by_filename(conn, system_name, filename)
+                if rom is None:
+                    continue
+
+                disc_filename = Path(game.findtext("path", default="")).name
+                seen_filenames.add(filename)  # matched via fallback -- don't report as not-in-export
+
+                idx = matched + unmatched + 1
+                if progress_callback:
+                    progress_callback(idx, total, filename)
+                _apply_game_to_rom(conn, config, game, rom, filename, export_path, media_root,
+                                    folder_index_cache, idx, total, progress_callback,
+                                    prefer_direct_probe=only_filenames is not None,
+                                    source_filename=disc_filename)
+                matched += 1
 
     result = {"matched": matched, "unmatched": unmatched}
     if only_filenames is not None:
         result["not_in_export"] = sorted(only_filenames - seen_filenames)
     return result
+
+
+def _apply_game_to_rom(conn, config: Config, game: ET.Element, rom, filename: str,
+                        export_path: Path, media_root: Path,
+                        folder_index_cache: dict[Path, dict[str, Path]],
+                        idx: int, total: int, progress_callback: ProgressCallback | None,
+                        prefer_direct_probe: bool, source_filename: str | None = None) -> None:
+    """Writes one Skraper <game> element's metadata, and copies its media,
+    onto one of our indexed ROMs. Shared between the main path-matched loop
+    and the .m3u fallback pass in import_skraper_export -- `game` and `rom`
+    don't have to share the same filename there: `filename` (the .m3u's own
+    name) drives what the copied media gets renamed to, while
+    `source_filename` (the matched disc file's name, defaulting to
+    `filename` when not given) drives where the folder-convention sweep
+    looks for it -- Skraper's media/ folder holds it under the disc's name,
+    not the .m3u's.
+    """
+    upsert_metadata(
+        conn,
+        rom_id=rom["id"],
+        source="skraper_import",
+        title=game.findtext("name"),
+        description=game.findtext("desc"),
+        release_date=game.findtext("releasedate"),
+        developer=game.findtext("developer"),
+        publisher=game.findtext("publisher"),
+        genre=game.findtext("genre"),
+        players=game.findtext("players"),
+        rating=_safe_float(game.findtext("rating")),
+    )
+
+    def _on_copy(kind: str, dest_name: str) -> None:
+        if progress_callback:
+            progress_callback(idx, total, f"{filename} -> {kind}/{dest_name}")
+
+    found_kinds: set[str] = set()
+    for tag, kind in MEDIA_TAGS.items():
+        if not config.is_media_enabled(kind):
+            continue
+        rel = game.findtext(tag)
+        if not rel:
+            continue
+        src = export_path / rel.lstrip("./")
+        if not src.exists():
+            continue
+        if _copy_media(conn, rom["id"], kind, src, media_root, filename, on_copy=_on_copy):
+            found_kinds.add(kind)
+
+    # Fallback: for any kind not already picked up from the XML, look for a
+    # same-named file under media/<folder>/ directly.
+    _scan_media_folders(conn, rom["id"], filename, export_path, media_root,
+                         skip_kinds=found_kinds, folder_index_cache=folder_index_cache,
+                         config=config, on_copy=_on_copy,
+                         prefer_direct_probe=prefer_direct_probe,
+                         source_filename=source_filename)
 
 
 def _copy_media(conn, rom_id: int, kind: str, src: Path, media_root: Path, rom_filename: str,
@@ -316,8 +400,15 @@ def _scan_media_folders(conn, rom_id: int, rom_filename: str, export_path: Path,
                          folder_index_cache: dict[Path, dict[str, Path]],
                          config: Config,
                          on_copy: Callable[[str, str], None] | None = None,
-                         prefer_direct_probe: bool = False) -> None:
-    stem = Path(rom_filename).stem
+                         prefer_direct_probe: bool = False,
+                         source_filename: str | None = None) -> None:
+    """source_filename, if given, is searched for in media/<folder>/ instead
+    of rom_filename -- used by the .m3u fallback pass, where the media
+    actually sits under the matched disc file's name (e.g. "Foo (Disc
+    1).png"), but the copy must still be named after rom_filename (the .m3u
+    itself) for ES-DE to associate it with the right game.
+    """
+    stem = Path(source_filename if source_filename is not None else rom_filename).stem
     media_dir = export_path / "media"
     if not media_dir.exists():
         return
