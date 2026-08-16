@@ -124,6 +124,16 @@ system pass entirely -- on a ~2200-ROM library, a full `import-skraper` run
 took ~18 minutes end-to-end, while a `--missing-only`/`--rom` run targeting
 one ROM took ~9 seconds.
 
+Made significant changes upstream instead (re-scraped a whole system in
+Skraper, restructured its NAS folder) and want a guaranteed-clean re-import
+rather than a merge on top of whatever's already cached? `python -m src.cli
+reset-system <system>` wipes every indexed ROM (DB row + cascaded
+metadata/media), stub file, cached media file, and `gamelist.xml` for that
+one system — dry run by default, `--apply` to actually delete. Unlike
+`prune-removed`, it doesn't check what's still on the NAS first; it clears
+the system unconditionally, `config.yaml` untouched, ready for the next
+`sync`.
+
 ### Adding a new machine (e.g. a second PC on the same NAS)
 
 Copy the repo over, then from the repo root on Windows: `.\setup.ps1` — it

@@ -60,10 +60,11 @@ NAS (Y:\roms\<system>\...)                    Local cache (SQLite + disk)
 | `clean-media [--system NAME] [--apply]` | Delete cached media no longer in your `enabled_media_types` selection |
 | `add-system` | Interactively add a new system to `config.yaml` |
 | `prune-removed [--system NAME] [--apply]` | Clean up entries for ROMs no longer found on the NAS |
+| `reset-system <system> [--apply]` | Wipe ALL local cache (DB rows, stubs, media, gamelist.xml) for one system, unconditionally |
 
 All commands accept `--config PATH` (default `config/config.yaml`).
-Destructive commands (`clean-media`, `prune-removed`) are **dry-run by
-default** — nothing is deleted until you pass `--apply`.
+Destructive commands (`clean-media`, `prune-removed`, `reset-system`) are
+**dry-run by default** — nothing is deleted until you pass `--apply`.
 
 ## Typical workflows
 
@@ -88,6 +89,19 @@ python -m src.cli prune-removed --system <name>            # dry run first
 python -m src.cli prune-removed --system <name> --apply
 python -m src.cli publish --system <name>
 ```
+
+**Cleanly re-adding a system after significant changes** (re-scraped
+everything in Skraper, restructured its NAS folder, or you just want a
+guaranteed-clean re-import instead of a merge on top of stale data):
+```bash
+python -m src.cli reset-system <system>            # dry run first
+python -m src.cli reset-system <system> --apply
+python -m src.cli sync --system <system>
+```
+Unlike `prune-removed`, this doesn't check what's still on the NAS -- it
+wipes every indexed ROM (and cascaded metadata/media), stub files, cached
+media, and `gamelist.xml` for that system unconditionally. `config.yaml` is
+untouched, so the system stays configured and ready for the next `sync`.
 
 **Restoring one ROM's metadata/media** (e.g. it just reappeared after being
 pruned, or was freshly scanned) — don't re-run `import-skraper` for the

@@ -17,10 +17,13 @@
     python -m src.cli add-system                  # interactively add a new system to config.yaml
     python -m src.cli prune-removed [--system NAME] [--apply]
                                                    # clean up entries for ROMs no longer on the NAS
+    python -m src.cli reset-system <system> [--apply]
+                                                   # wipe ALL local cache for one system, unconditionally
 """
 from __future__ import annotations
 
 import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -743,6 +746,76 @@ def prune_removed(config_path, system, apply_changes):
         click.echo("Run `publish` to update gamelist.xml so ES-DE stops showing these.")
     else:
         click.echo(f"Would remove {total} stale ROM(s) -- re-run with --apply to actually delete.")
+
+
+@cli.command("reset-system")
+@CONFIG_OPTION
+@click.argument("system")
+@click.option("--apply", "apply_changes", is_flag=True,
+              help="Actually delete. Without this, only shows what would be removed.")
+def reset_system(config_path, system, apply_changes):
+    """Wipes ALL locally cached data for one system -- every indexed ROM
+    (DB row, cascading to its metadata + media rows), every stub file,
+    every cached media file, and gamelist.xml -- unconditionally, without
+    checking what's still on the NAS. For when you've made significant
+    changes (re-scraped the whole system in Skraper, restructured its NAS
+    folder, etc.) and want a guaranteed-clean re-import instead of a merge
+    on top of stale data. Unlike prune-removed, this doesn't require a
+    fresh scan first, and it removes ROMs still present on the NAS too.
+    config.yaml is left untouched -- the system stays configured, ready
+    for the next scan/sync. Dry run by default, matching this project's
+    other destructive-operation convention -- pass --apply to actually
+    delete."""
+    config = load_config(config_path)
+    _validate_system(config, system)
+
+    with connect(config.db_path) as conn:
+        rom_count = conn.execute(
+            "SELECT COUNT(*) FROM roms WHERE system = ?", (system,)
+        ).fetchone()[0]
+        media_rows = conn.execute(
+            "SELECT media.local_path FROM media "
+            "JOIN roms ON roms.id = media.rom_id WHERE roms.system = ?",
+            (system,),
+        ).fetchall()
+
+    media_bytes = sum(
+        Path(r["local_path"]).stat().st_size
+        for r in media_rows if Path(r["local_path"]).exists()
+    )
+
+    stub_dir = config.roms_stub_root / system
+    media_dir = config.media_root / system
+    gamelist_path = config.gamelists_root / system / "gamelist.xml"
+    stub_count = sum(1 for p in stub_dir.rglob("*") if p.is_file()) if stub_dir.exists() else 0
+
+    if rom_count == 0 and stub_count == 0 and not media_rows and not gamelist_path.exists():
+        click.echo(f"'{system}': nothing cached locally -- already clean.")
+        return
+
+    click.echo(f"=== {system} ===")
+    click.echo(f"  {rom_count} indexed ROM(s) (DB row + cascaded metadata/media rows)")
+    click.echo(f"  {len(media_rows)} cached media file(s), {_human_size(media_bytes)}")
+    click.echo(f"  {stub_count} stub file(s) under {stub_dir}")
+    click.echo(f"  gamelist.xml: {'present' if gamelist_path.exists() else 'not present'} ({gamelist_path})")
+
+    if not apply_changes:
+        click.echo(f"\nWould wipe all of the above -- re-run with --apply to actually delete.")
+        click.echo(f"config.yaml is untouched -- '{system}' stays configured for the next sync.")
+        return
+
+    with connect(config.db_path) as conn:
+        conn.execute("DELETE FROM roms WHERE system = ?", (system,))  # cascades to metadata/media rows
+
+    if stub_dir.exists():
+        shutil.rmtree(stub_dir)
+    if media_dir.exists():
+        shutil.rmtree(media_dir)
+    if gamelist_path.exists():
+        gamelist_path.unlink()
+
+    click.echo(f"\nWiped all local data for '{system}'.")
+    click.echo(f"Run `sync --system {system}` (or scan + import-skraper + publish) to rebuild it.")
 
 
 if __name__ == "__main__":
