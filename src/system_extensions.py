@@ -3,44 +3,47 @@ extensions prompt so you don't have to remember/type them out per system.
 Uses the same key vocabulary as system_names.py/scrapers/screenscraper_ids.py
 for consistency.
 
-Cartridge/ROM-based systems generally include ".zip" (RetroArch cores read
-zipped ROMs directly for these); disc-based systems don't, since disc
-images are already compressed (.chd) or too structurally multi-file to zip
-usefully.
+GLOBAL_ARCHIVE_EXTENSIONS are appended to every system's suggestion
+regardless of what's in COMMON_EXTENSIONS -- most emulator cores (RetroArch
+and otherwise) can read a ROM straight out of a zip/7z/tar archive, so
+these are safe defaults everywhere rather than something to list per
+system.
 
-Not exhaustive -- unknown keys just get no default, no different from
-before this existed. Override anytime by typing something else at the
+Not exhaustive -- an unmapped system key still gets GLOBAL_ARCHIVE_EXTENSIONS
+as its suggestion. Override anytime by typing something else at the
 prompt, or editing `extensions:` directly in config.yaml.
 """
 
+GLOBAL_ARCHIVE_EXTENSIONS: list[str] = [".zip", ".7z", ".tar"]
+
 COMMON_EXTENSIONS: dict[str, list[str]] = {
     # Nintendo
-    "nes": [".nes", ".zip"],
-    "fds": [".fds", ".zip"],
-    "snes": [".sfc", ".smc", ".zip"],
-    "n64": [".z64", ".n64", ".v64", ".zip"],
-    "gb": [".gb", ".zip"],
-    "gbc": [".gbc", ".zip"],
-    "gba": [".gba", ".zip"],
+    "nes": [".nes"],
+    "fds": [".fds"],
+    "snes": [".sfc", ".smc"],
+    "n64": [".z64", ".n64", ".v64"],
+    "gb": [".gb"],
+    "gbc": [".gbc"],
+    "gba": [".gba"],
     "nds": [".nds"],
     "3ds": [".3ds", ".cia"],
     "gc": [".iso", ".gcm", ".rvz"],
     "wii": [".iso", ".wbfs", ".rvz"],
     "wiiu": [".wud", ".wux", ".rpx"],
     "switch": [".nsp", ".xci"],
-    "virtualboy": [".vb", ".zip"],
+    "virtualboy": [".vb"],
 
     # Sega
-    "mastersystem": [".sms", ".zip"],
-    "genesis": [".md", ".gen", ".smd", ".zip"],
-    "megadrive": [".md", ".gen", ".smd", ".zip"],
-    "gamegear": [".gg", ".zip"],
-    "sega32x": [".32x", ".zip"],
+    "mastersystem": [".sms"],
+    "genesis": [".md", ".gen", ".smd"],
+    "megadrive": [".md", ".gen", ".smd"],
+    "gamegear": [".gg"],
+    "sega32x": [".32x"],
     "segacd": [".chd", ".cue"],
     "megacd": [".chd", ".cue"],
     "saturn": [".chd", ".cue"],
     "dreamcast": [".gdi", ".cdi", ".chd"],
-    "sg-1000": [".sg", ".zip"],
+    "sg-1000": [".sg"],
 
     # Sony
     "psx": [".chd", ".cue", ".pbp"],
@@ -48,42 +51,40 @@ COMMON_EXTENSIONS: dict[str, list[str]] = {
     "psp": [".iso", ".cso", ".pbp"],
 
     # Atari
-    "atari2600": [".a26", ".bin", ".zip"],
-    "atari5200": [".a52", ".zip"],
-    "atari7800": [".a78", ".zip"],
-    "atari800": [".atr", ".zip"],
-    "atarist": [".st", ".zip"],
-    "atarilynx": [".lnx", ".zip"],
-    "atarijaguar": [".j64", ".jag", ".zip"],
+    "atari2600": [".a26", ".bin"],
+    "atari5200": [".a52"],
+    "atari7800": [".a78"],
+    "atari800": [".atr"],
+    "atarist": [".st"],
+    "atarilynx": [".lnx"],
+    "atarijaguar": [".j64", ".jag"],
     "atarijaguarcd": [".cue", ".chd"],
 
     # NEC
-    "pcengine": [".pce", ".zip"],
+    "pcengine": [".pce"],
     "pcenginecd": [".cue", ".chd"],
     "pcfx": [".cue", ".chd"],
 
     # SNK
-    "neogeo": [".zip"],
     "neogeocd": [".cue", ".chd"],
-    "ngp": [".ngp", ".zip"],
-    "ngpc": [".ngc", ".zip"],
+    "ngp": [".ngp"],
+    "ngpc": [".ngc"],
 
     # Other
     "3do": [".cue", ".chd", ".iso"],
-    "amiga": [".adf", ".zip"],
-    "amstradcpc": [".dsk", ".zip"],
-    "apple2": [".dsk", ".po", ".zip"],
-    "arcade": [".zip"],
-    "c64": [".d64", ".zip"],
-    "coleco": [".col", ".zip"],
-    "intellivision": [".int", ".zip"],
-    "msx": [".dsk", ".rom", ".zip"],
-    "msx2": [".dsk", ".rom", ".zip"],
-    "pc98": [".d88", ".zip"],
-    "vectrex": [".vec", ".zip"],
-    "vic20": [".prg", ".zip"],
-    "wonderswan": [".ws", ".zip"],
-    "wonderswancolor": [".wsc", ".zip"],
-    "x68000": [".dim", ".zip"],
-    "zxspectrum": [".tzx", ".tap", ".zip"],
+    "amiga": [".adf"],
+    "amstradcpc": [".dsk"],
+    "apple2": [".dsk", ".po"],
+    "c64": [".d64"],
+    "coleco": [".col"],
+    "intellivision": [".int"],
+    "msx": [".dsk", ".rom"],
+    "msx2": [".dsk", ".rom"],
+    "pc98": [".d88"],
+    "vectrex": [".vec"],
+    "vic20": [".prg"],
+    "wonderswan": [".ws"],
+    "wonderswancolor": [".wsc"],
+    "x68000": [".dim"],
+    "zxspectrum": [".tzx", ".tap"],
 }
