@@ -58,7 +58,7 @@ NAS (Y:\roms\<system>\...)                    Local cache (SQLite + disk)
 | `generate-es-systems [--output PATH]` | Write `<system>` entries into ES-DE's `custom_systems/es_systems.xml` |
 | `configure-media` | Interactively choose which media types to cache |
 | `clean-media [--system NAME] [--apply]` | Delete cached media no longer in your `enabled_media_types` selection |
-| `add-system` | Interactively add a new system to `config.yaml` |
+| `add-system` | Interactively add a new system to `config.yaml` (auto-suggests file extensions for known system keys) |
 | `prune-removed [--system NAME] [--apply]` | Clean up entries for ROMs no longer found on the NAS |
 | `reset-system <system> [--apply]` | Wipe ALL local cache (DB rows, stubs, media, gamelist.xml) for one system, unconditionally |
 

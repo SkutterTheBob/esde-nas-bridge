@@ -38,6 +38,7 @@ from .media_types import ALL_MEDIA_TYPES, LARGE_MEDIA_TYPES
 from .rom_stubs import write_stubs_for_system
 from .scrapers.api_scraper import FatalScraperError, scrape_system
 from .scrapers.skraper_import import import_skraper_export
+from .system_extensions import COMMON_EXTENSIONS
 from .system_names import COMMON_FULLNAMES
 
 CONFIG_OPTION = click.option(
@@ -521,7 +522,14 @@ def add_system(config_path):
 
     subdir = click.prompt("NAS subfolder name for this system", default=name)
 
-    extensions_raw = click.prompt("File extensions, comma-separated (e.g. '.zip,.chd')")
+    suggested_extensions = COMMON_EXTENSIONS.get(name)
+    if suggested_extensions:
+        extensions_raw = click.prompt(
+            "File extensions, comma-separated (Enter to accept the auto-detected list)",
+            default=",".join(suggested_extensions),
+        )
+    else:
+        extensions_raw = click.prompt("File extensions, comma-separated (e.g. '.zip,.chd')")
     extensions = []
     for e in extensions_raw.split(","):
         e = e.strip()
