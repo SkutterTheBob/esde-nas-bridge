@@ -59,7 +59,7 @@ NAS (Y:\roms\<system>\...)                    Local cache (SQLite + disk)
 | `configure-media` | Interactively choose which media types to cache |
 | `clean-media [--system NAME] [--apply]` | Delete cached media no longer in your `enabled_media_types` selection |
 | `add-system` | Interactively add a new system to `config.yaml` (auto-suggests file extensions for known system keys) |
-| `prune-removed [--system NAME] [--apply]` | Clean up entries for ROMs no longer found on the NAS (warns + confirms separately if any look stale only because an extension was removed from config, not because the file is actually gone) |
+| `prune-removed [--system NAME] [--apply] [--orphaned-media]` | Clean up entries for ROMs no longer found on the NAS (warns + confirms separately if any look stale only because an extension was removed from config, not because the file is actually gone). `--orphaned-media` additionally sweeps `media_root` for files no longer referenced by any tracked ROM (renamed files, old re-scrapes) — runs even if nothing's stale |
 | `reset-system <system> [--apply]` | Wipe ALL local cache (DB rows, stubs, media, gamelist.xml) for one system, unconditionally |
 
 All commands accept `--config PATH` (default `config/config.yaml`).
@@ -121,6 +121,9 @@ python -m src.cli configure-media   # interactive picker, updates config.yaml
 python -m src.cli clean-media                     # dry run — see what would go
 python -m src.cli clean-media --apply
 ```
+For leftover media files no longer tied to any tracked ROM (renamed files,
+old re-scrapes) rather than a deliberate media-type change, use
+`prune-removed --orphaned-media` instead — see below.
 
 **New machine, same NAS/library:**
 ```powershell
@@ -315,3 +318,4 @@ Edit directly or via ES-DE's own settings UI where exposed.
 | ROM back on the NAS but still missing art/metadata in ES-DE | `scan`, then `import-skraper <system> --missing-only`, then `publish` |
 | `add-system`/`configure-media` says it "couldn't safely auto-update config.yaml" | Your `config.yaml` doesn't match the expected structure for the surgical text edit — add the shown block by hand |
 | `No such system 'X' in config.yaml. Configured systems: ...` | That system hasn't been added yet — run `add-system` first |
+| `import-skraper`/`sync` says "No gamelist.xml found in ..." | Skraper hasn't been run against that NAS folder yet (or `skraper_imports:` points at the wrong path) — run Skraper there first, or fix the entry in `config.yaml`. `sync` skips just that system's import and continues with the rest |

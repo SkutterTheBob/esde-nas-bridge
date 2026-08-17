@@ -15,8 +15,9 @@
     python -m src.cli clean-media [--system NAME] [--apply]
                                                    # remove already-cached media no longer enabled
     python -m src.cli add-system                  # interactively add a new system to config.yaml
-    python -m src.cli prune-removed [--system NAME] [--apply]
-                                                   # clean up entries for ROMs no longer on the NAS
+    python -m src.cli prune-removed [--system NAME] [--apply] [--orphaned-media]
+                                                   # clean up entries for ROMs no longer on the NAS,
+                                                   # optionally also sweeping untracked media files
     python -m src.cli reset-system <system> [--apply]
                                                    # wipe ALL local cache for one system, unconditionally
 """
@@ -156,9 +157,17 @@ def import_skraper(config_path, system, roms, missing_only):
         if not only_filenames:
             click.echo(f"{system}: nothing missing metadata -- every indexed ROM already has some.")
             return
-    result = import_skraper_export(
-        config, system, export_dir, progress_callback=progress, only_filenames=only_filenames
-    )
+    try:
+        result = import_skraper_export(
+            config, system, export_dir, progress_callback=progress, only_filenames=only_filenames
+        )
+    except FileNotFoundError:
+        if is_tty():
+            click.echo()
+        raise click.ClickException(
+            f"No gamelist.xml found in {export_dir} -- run Skraper against that folder "
+            f"first (or fix the skraper_imports entry for '{system}' in config.yaml)."
+        )
     if is_tty():
         click.echo()
     click.echo(f"{system}: matched {result['matched']}, unmatched {result['unmatched']}")
@@ -283,12 +292,21 @@ def sync(config_path, system, checksums, skip_skraper):
         click.echo(f"  scan: indexed {count} ROMs")
 
         if not skip_skraper and name in config.skraper_imports:
-            result = import_skraper_export(
-                config, name, config.skraper_imports[name], progress_callback=progress
-            )
-            if is_tty():
-                click.echo()
-            click.echo(f"  import-skraper: matched {result['matched']}, unmatched {result['unmatched']}")
+            try:
+                result = import_skraper_export(
+                    config, name, config.skraper_imports[name], progress_callback=progress
+                )
+            except FileNotFoundError:
+                if is_tty():
+                    click.echo()
+                click.echo(
+                    f"  import-skraper: no gamelist.xml found in {config.skraper_imports[name]} "
+                    f"-- run Skraper against that folder first. Skipping import for '{name}'."
+                )
+            else:
+                if is_tty():
+                    click.echo()
+                click.echo(f"  import-skraper: matched {result['matched']}, unmatched {result['unmatched']}")
 
         stub_count = write_stubs_for_system(config, name, progress_callback=progress)
         if is_tty():
@@ -697,12 +715,48 @@ def clean_media(config_path, system, apply_changes):
         )
 
 
+def _find_orphaned_media(config, systems: list[str]) -> list[tuple[str, Path]]:
+    """Walks cache.media_root/<system>/** for each given system and returns
+    every file there that isn't referenced by any current `media` row for
+    that system -- leftovers from a renamed ROM, a re-scrape that produced
+    a differently-named file, or a manual copy. Scoped strictly to
+    media_root/<system> per system (never anything outside it, e.g. other
+    systems ES-DE manages independently of this tool) and compared against
+    the DB as it stands when called -- if this runs after prune-removed's
+    own stale-ROM deletions in the same invocation, those already-handled
+    files are naturally excluded (their media rows are gone, but so are
+    the files themselves, deleted a few lines up)."""
+    orphans = []
+    with connect(config.db_path) as conn:
+        for name in systems:
+            system_media_root = config.media_root / name
+            if not system_media_root.is_dir():
+                continue
+            tracked = {
+                Path(row["local_path"]).resolve()
+                for row in conn.execute(
+                    "SELECT media.local_path FROM media JOIN roms ON roms.id = media.rom_id "
+                    "WHERE roms.system = ?",
+                    (name,),
+                ).fetchall()
+            }
+            for path in system_media_root.rglob("*"):
+                if path.is_file() and path.resolve() not in tracked:
+                    orphans.append((name, path))
+    return orphans
+
+
 @cli.command("prune-removed")
 @CONFIG_OPTION
 @click.option("--system", default=None, help="Only prune this system (default: all)")
 @click.option("--apply", "apply_changes", is_flag=True,
               help="Actually delete. Without this, only shows what would be removed.")
-def prune_removed(config_path, system, apply_changes):
+@click.option("--orphaned-media", "sweep_orphaned_media", is_flag=True,
+              help="Also remove media files under cache.media_root that no longer belong to "
+                   "any currently-tracked ROM for the same --system scope (e.g. leftovers from "
+                   "a renamed file or an old re-scrape) -- runs regardless of whether any ROM "
+                   "was found stale above, to free up space.")
+def prune_removed(config_path, system, apply_changes, sweep_orphaned_media):
     """Cleans up local entries (DB row, stub file, cached media) for ROMs
     that a recent `scan` no longer found on the NAS -- e.g. after removing,
     renaming, or reorganizing files there. Run `scan` first so this has
@@ -720,6 +774,12 @@ def prune_removed(config_path, system, apply_changes):
     --apply touches anything, since deleting the cached metadata/art for
     ROMs that are still sitting right there on the NAS would be a real
     loss, not a cleanup.
+
+    --orphaned-media adds a second, independent pass: files under
+    cache.media_root/<system> that no `media` row references at all
+    (renamed ROMs, re-scrapes that left the old file behind, etc.),
+    regardless of whether any ROM was found stale above. Runs even when
+    there's nothing stale to prune. Same dry-run-by-default --apply gate.
     """
     config = load_config(config_path)
     if system:
@@ -746,57 +806,93 @@ def prune_removed(config_path, system, apply_changes):
     click.echo()
     if not entries:
         click.echo("Nothing stale -- every indexed ROM was found on the last scan.")
+    else:
+        drift_entries = [e for e in entries if e[2]]
+        if drift_entries:
+            click.echo(
+                f"WARNING: {len(drift_entries)} of {len(entries)} flagged ROM(s) have an "
+                "extension no longer in their system's `extensions:` list in config.yaml -- "
+                "scan simply stopped looking for them, which looks identical to a real NAS "
+                "removal from a timestamp alone. They may still be sitting right there on the "
+                "NAS untouched (e.g. after editing `extensions:`, or converting/renaming files "
+                "to a format you haven't added to config.yaml yet). If that's not what you "
+                "intended, add the extension back, re-run `scan`, then `prune-removed` again --"
+                " they'll no longer show as stale."
+            )
+            for name, rom, _ in drift_entries:
+                click.echo(f"  {name}: {rom['rel_path']}")
+            click.echo()
+
+        if not apply_changes:
+            click.echo(f"Would remove {len(entries)} stale ROM(s) -- re-run with --apply to actually delete.")
+        else:
+            if drift_entries and not click.confirm(
+                f"Proceed and remove all {len(entries)} flagged ROM(s) anyway, including the "
+                f"{len(drift_entries)} flagged above as possibly still present on the NAS?",
+                default=False,
+            ):
+                click.echo("Aborted -- nothing was removed.")
+                return
+
+            for name, rom, _ in entries:
+                with connect(config.db_path) as conn:
+                    media_rows = conn.execute(
+                        "SELECT local_path FROM media WHERE rom_id = ?", (rom["id"],)
+                    ).fetchall()
+
+                stub_path = config.roms_stub_root / name / rom["rel_path"]
+                if stub_path.exists():
+                    stub_path.unlink()
+                for m in media_rows:
+                    p = Path(m["local_path"])
+                    if p.exists():
+                        p.unlink()
+
+                with connect(config.db_path) as conn:
+                    # Cascades to metadata + media DB rows automatically
+                    # (ON DELETE CASCADE, see db.py's schema).
+                    conn.execute("DELETE FROM roms WHERE id = ?", (rom["id"],))
+
+            click.echo(f"Removed {len(entries)} stale ROM(s) and their cached data.")
+            click.echo("Run `publish` to update gamelist.xml so ES-DE stops showing these.")
+
+    if not sweep_orphaned_media:
         return
 
-    drift_entries = [e for e in entries if e[2]]
-    if drift_entries:
-        click.echo(
-            f"WARNING: {len(drift_entries)} of {len(entries)} flagged ROM(s) have an "
-            "extension no longer in their system's `extensions:` list in config.yaml -- "
-            "scan simply stopped looking for them, which looks identical to a real NAS "
-            "removal from a timestamp alone. They may still be sitting right there on the "
-            "NAS untouched (e.g. after editing `extensions:`, or converting/renaming files "
-            "to a format you haven't added to config.yaml yet). If that's not what you "
-            "intended, add the extension back, re-run `scan`, then `prune-removed` again --"
-            " they'll no longer show as stale."
-        )
-        for name, rom, _ in drift_entries:
-            click.echo(f"  {name}: {rom['rel_path']}")
-        click.echo()
+    # Independent of the stale-ROM pass above: files sitting under
+    # media_root/<system> that no `media` row references at all, tracked
+    # ROM or not (e.g. left behind by a rename, or a re-scrape that wrote
+    # a differently-named file over the old one without cleaning it up).
+    # Run after the stale-ROM deletions above so a file removed by that
+    # pass isn't double-counted here.
+    click.echo()
+    orphans = _find_orphaned_media(config, systems)
+    if not orphans:
+        click.echo("No orphaned media found -- every cached file under media_root matches a tracked ROM.")
+        return
+
+    total_bytes = sum(p.stat().st_size for _, p in orphans if p.exists())
+    click.echo(f"Orphaned media ({len(orphans)} files, {_human_size(total_bytes)}):")
+    for name, p in orphans:
+        click.echo(f"  {name}: {p}")
 
     if not apply_changes:
-        click.echo(f"Would remove {len(entries)} stale ROM(s) -- re-run with --apply to actually delete.")
+        click.echo(
+            f"\nWould remove {len(orphans)} orphaned file(s) ({_human_size(total_bytes)}) "
+            "-- re-run with --apply to actually delete."
+        )
         return
 
-    if drift_entries and not click.confirm(
-        f"Proceed and remove all {len(entries)} flagged ROM(s) anyway, including the "
-        f"{len(drift_entries)} flagged above as possibly still present on the NAS?",
-        default=False,
-    ):
-        click.echo("Aborted -- nothing was removed.")
-        return
+    kind_dirs = set()
+    for _, p in orphans:
+        if p.exists():
+            p.unlink()
+        kind_dirs.add(p.parent)
+    for d in kind_dirs:
+        if d.exists() and not any(d.iterdir()):
+            d.rmdir()
 
-    for name, rom, _ in entries:
-        with connect(config.db_path) as conn:
-            media_rows = conn.execute(
-                "SELECT local_path FROM media WHERE rom_id = ?", (rom["id"],)
-            ).fetchall()
-
-        stub_path = config.roms_stub_root / name / rom["rel_path"]
-        if stub_path.exists():
-            stub_path.unlink()
-        for m in media_rows:
-            p = Path(m["local_path"])
-            if p.exists():
-                p.unlink()
-
-        with connect(config.db_path) as conn:
-            # Cascades to metadata + media DB rows automatically (ON DELETE
-            # CASCADE, see db.py's schema).
-            conn.execute("DELETE FROM roms WHERE id = ?", (rom["id"],))
-
-    click.echo(f"Removed {len(entries)} stale ROM(s) and their cached data.")
-    click.echo("Run `publish` to update gamelist.xml so ES-DE stops showing these.")
+    click.echo(f"\nRemoved {len(orphans)} orphaned file(s), freed {_human_size(total_bytes)}.")
 
 
 @cli.command("reset-system")

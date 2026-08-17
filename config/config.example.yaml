@@ -76,19 +76,22 @@ nas:
   #     timeout_seconds: 15
 
 systems:
-  snes:
-    nas_source: main-nas
-    subdir: "snes"
-    extensions: [".sfc", ".smc", ".zip"]
-    retroarch_core: "snes9x_libretro"
-    # Optional: only needed if the built-in name->id table (screenscraper_ids.py)
-    # doesn't already cover this system name, or you want to override it.
-    # screenscraper_id: 4
-  genesis:
-    nas_source: main-nas
-    subdir: "genesis"
-    extensions: [".md", ".bin", ".zip"]
-    retroarch_core: "genesis_plus_gx_libretro"
+  # Nothing configured by default -- the folder names/extensions/cores below
+  # are just examples and almost certainly don't match your own library.
+  # Easiest way to add a system: `python -m src.cli add-system` (interactive,
+  # auto-suggests extensions/fullname/ScreenScraper ID from the built-in
+  # tables). Or copy one of the two commented-out examples below and edit
+  # it by hand.
+
+  # Example: a RetroArch-core system (the common case).
+  # snes:
+  #   nas_source: main-nas
+  #   subdir: "snes"
+  #   extensions: [".sfc", ".smc", ".zip"]
+  #   retroarch_core: "snes9x_libretro"
+  #   # Optional: only needed if the built-in name->id table (screenscraper_ids.py)
+  #   # doesn't already cover this system name, or you want to override it.
+  #   # screenscraper_id: 4
 
   # Example: standalone (non-RetroArch) emulator instead of a libretro core --
   # set EXACTLY ONE of `retroarch_core` or `emulator` per system, never both.
@@ -120,8 +123,7 @@ skraper_imports:
   # itself a deliberate, occasional network touch, same as `scan`, separate
   # from ES-DE's normal browsing which only ever reads the local copy this
   # tool produces.
-  snes: 'Y:\roms\snes'
-  genesis: 'Y:\roms\genesis'
+  # snes: 'Y:\roms\snes'
 
 scraper:
   # skraper_import is the primary source now that Skraper already covers

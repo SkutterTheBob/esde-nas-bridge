@@ -183,7 +183,7 @@ def load_config(path: str | Path) -> Config:
         )
 
     systems = {}
-    for name, s in raw["systems"].items():
+    for name, s in (raw.get("systems") or {}).items():
         emulator_raw = s.get("emulator")
         emulator = None
         if emulator_raw:
@@ -225,7 +225,7 @@ def load_config(path: str | Path) -> Config:
         roms_stub_root=Path(_strip_wrapping_quotes(cache["roms_stub_root"])),
         nas_sources=nas_sources,
         systems=systems,
-        skraper_imports={k: _strip_wrapping_quotes(v) for k, v in raw.get("skraper_imports", {}).items()},
+        skraper_imports={k: _strip_wrapping_quotes(v) for k, v in (raw.get("skraper_imports") or {}).items()},
         scraper_priority=scraper.get("priority", ["skraper_import", "api"]),
         scraper_api=ScraperApiConfig(
             provider=api.get("provider", "screenscraper"),
