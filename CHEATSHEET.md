@@ -59,6 +59,7 @@ NAS (Y:\roms\<system>\...)                    Local cache (SQLite + disk)
 | `configure-media` | Interactively choose which media types to cache |
 | `clean-media [--system NAME] [--apply]` | Delete cached media no longer in your `enabled_media_types` selection |
 | `add-system` | Interactively add a new system to `config.yaml` (auto-suggests file extensions for known system keys) |
+| `list-systems` | Show every configured system's NAS path, extensions, emulator, Skraper import path, and indexed ROM count. Read-only |
 | `prune-removed [--system NAME] [--apply] [--orphaned-media]` | Clean up entries for ROMs no longer found on the NAS (warns + confirms separately if any look stale only because an extension was removed from config, not because the file is actually gone). `--orphaned-media` additionally sweeps `media_root` for files no longer referenced by any tracked ROM (renamed files, old re-scrapes) — runs even if nothing's stale |
 | `reset-system <system> [--apply]` | Wipe ALL local cache (DB rows, stubs, media, gamelist.xml) for one system, unconditionally |
 

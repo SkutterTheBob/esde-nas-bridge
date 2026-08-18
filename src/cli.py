@@ -15,6 +15,8 @@
     python -m src.cli clean-media [--system NAME] [--apply]
                                                    # remove already-cached media no longer enabled
     python -m src.cli add-system                  # interactively add a new system to config.yaml
+    python -m src.cli list-systems                # show every configured system's NAS path,
+                                                   # extensions, emulator, and indexed ROM count
     python -m src.cli prune-removed [--system NAME] [--apply] [--orphaned-media]
                                                    # clean up entries for ROMs no longer on the NAS,
                                                    # optionally also sweeping untracked media files
@@ -636,6 +638,45 @@ def add_system(config_path):
     click.echo(f"\nNext steps:")
     click.echo(f"  python -m src.cli sync --system {name}")
     click.echo(f"  python -m src.cli generate-es-systems")
+
+
+@cli.command("list-systems")
+@CONFIG_OPTION
+def list_systems(config_path):
+    """Shows every system configured in config.yaml: its resolved NAS path,
+    file extensions, which emulator launches it, its Skraper import path
+    (if any), and how many ROMs are currently indexed (0 if `scan`/`sync`
+    hasn't been run for it yet). Read-only -- never touches the NAS."""
+    config = load_config(config_path)
+    if not config.systems:
+        click.echo("No systems configured yet -- run `add-system` to add one.")
+        return
+
+    init_db(config.db_path)
+    with connect(config.db_path) as conn:
+        for name, sys_cfg in config.systems.items():
+            fullname = sys_cfg.fullname or COMMON_FULLNAMES.get(name.lower(), name)
+            nas_source = config.nas_sources.get(sys_cfg.nas_source)
+            nas_path = (
+                str(Path(nas_source.root) / sys_cfg.subdir)
+                if nas_source else "(unknown nas_source -- check config.yaml)"
+            )
+            if sys_cfg.emulator:
+                emulator_desc = f'Standalone: "{sys_cfg.emulator.binary}" {sys_cfg.emulator.args}'
+            else:
+                emulator_desc = f"RetroArch core: {sys_cfg.retroarch_core}"
+            skraper_path = config.skraper_imports.get(name, "(not configured)")
+            rom_count = conn.execute(
+                "SELECT COUNT(*) c FROM roms WHERE system = ?", (name,)
+            ).fetchone()["c"]
+
+            click.echo(f"=== {name} ({fullname}) ===")
+            click.echo(f"  NAS path:       {nas_path}")
+            click.echo(f"  Extensions:     {' '.join(sys_cfg.extensions)}")
+            click.echo(f"  Emulator:       {emulator_desc}")
+            click.echo(f"  Skraper import: {skraper_path}")
+            click.echo(f"  Indexed ROMs:   {rom_count}")
+            click.echo()
 
 
 def _human_size(num_bytes: float) -> str:

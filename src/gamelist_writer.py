@@ -46,6 +46,17 @@ KIND_TO_TAG = {
     "backcovers": "backcover",
 }
 
+# ScreenScraper's generic placeholder for a ROM it's identified as not a
+# game but has no real name for at all (test carts, calibration/aging
+# cartridges, corrupt or non-functional dumps, etc.) -- as opposed to
+# "ZZZ(notgame):<Real Name>", which covers legitimately-named non-game
+# software (BIOS files, demo disks, applications like GEOS) that still has
+# a real identifiable name and stays visible. Excluded from the written
+# gamelist.xml entirely (never shown in ES-DE) since a literal "#NONGAME"
+# title is never useful to see in the library. Doesn't touch the ROM's own
+# indexed/stub/media data -- only what gets written out here.
+NONGAME_PLACEHOLDER_TITLE = "ZZZ(notgame):#NONGAME"
+
 
 def write_gamelist(config: Config, system_name: str) -> Path:
     out_dir = config.gamelists_root / system_name
@@ -60,17 +71,18 @@ def write_gamelist(config: Config, system_name: str) -> Path:
         ).fetchall()
 
         for rom in roms:
-            game_el = ET.SubElement(root, "game")
-            ET.SubElement(game_el, "path").text = f"./{rom['rel_path']}"
-
             meta = conn.execute(
                 "SELECT * FROM metadata WHERE rom_id = ?", (rom["id"],)
             ).fetchone()
             # Fall back to filename if nothing's been scraped yet, so the
             # game still shows up in the frontend rather than being omitted.
-            ET.SubElement(game_el, "name").text = (
-                meta["title"] if meta and meta["title"] else rom["rom_filename"]
-            )
+            title = meta["title"] if meta and meta["title"] else rom["rom_filename"]
+            if title == NONGAME_PLACEHOLDER_TITLE:
+                continue
+
+            game_el = ET.SubElement(root, "game")
+            ET.SubElement(game_el, "path").text = f"./{rom['rel_path']}"
+            ET.SubElement(game_el, "name").text = title
             if meta:
                 _maybe_set(game_el, "desc", meta["description"])
                 _maybe_set(game_el, "releasedate", meta["release_date"])
