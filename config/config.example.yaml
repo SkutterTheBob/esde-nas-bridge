@@ -42,6 +42,12 @@ cache:
   # `generate-es-systems`. Auto-derived from gamelists_root's parent
   # otherwise, which holds for every config in this project so far.
   # es_de_home: 'C:\Users\YOURNAME\ES-DE'
+  # Optional: a folder with one subfolder per possible system short code
+  # (e.g. a copy of ES-DE's own default ROMs directory structure -- every
+  # subfolder name is a valid `systems:` key). Only used by the terminal
+  # UI (tui.bat/tui.sh) to offer a picker for Add System's system-key
+  # field instead of free-text entry; the CLI ignores this entirely.
+  # systems_reference_dir: 'C:\Users\YOURNAME\ES-DE\ROMs'
   # Optional: restrict import-skraper/scrape to only these media types,
   # to save disk space on a large library (videos and manuals are usually
   # the biggest). Omit this key entirely to cache everything (the default).

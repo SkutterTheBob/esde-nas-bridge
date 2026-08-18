@@ -24,6 +24,7 @@ configured to point at the local stub tree, not the NAS.
 """
 from __future__ import annotations
 
+import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -46,16 +47,39 @@ KIND_TO_TAG = {
     "backcovers": "backcover",
 }
 
-# ScreenScraper's generic placeholder for a ROM it's identified as not a
-# game but has no real name for at all (test carts, calibration/aging
-# cartridges, corrupt or non-functional dumps, etc.) -- as opposed to
-# "ZZZ(notgame):<Real Name>", which covers legitimately-named non-game
-# software (BIOS files, demo disks, applications like GEOS) that still has
-# a real identifiable name and stays visible. Excluded from the written
-# gamelist.xml entirely (never shown in ES-DE) since a literal "#NONGAME"
-# title is never useful to see in the library. Doesn't touch the ROM's own
-# indexed/stub/media data -- only what gets written out here.
-NONGAME_PLACEHOLDER_TITLE = "ZZZ(notgame):#NONGAME"
+# ScreenScraper tags a ROM it's identified as not a game with a
+# "ZZZ(notgame):" prefixed title -- either a bare category code with no
+# real name ("ZZZ(notgame):#NONGAME", "#BIOS", "#PROGRAMS", "#demo", ...)
+# or an actual attempted name ("ZZZ(notgame):Geos 1.2"). Neither half is
+# trustworthy: the category codes are obviously useless to show, and the
+# named ones are frequently just wrong -- e.g. six different physical
+# Minolta camera test-cart ROMs in this library, all with different
+# filenames, all got the identical ScreenScraper title "Minolta 2085 Adj.
+# Program" (confirmed by inspecting the local DB). Rather than show either
+# half, both cases fall back to a title inferred from the ROM's OWN
+# filename (region/revision/language tags stripped) -- the one thing
+# that's actually specific to that ROM. Doesn't touch the ROM's own
+# indexed/stub/media data -- only the <name> written out here.
+_NONGAME_PREFIX_RE = re.compile(r"^ZZZ\(notgame\):")
+
+# Trailing "(...)"/"[...]" tag groups in No-Intro/TOSEC/Redump-style
+# filenames -- region, revision, language, dump-quality flags, etc., e.g.
+# "Foo (USA) (Rev 1) [b].zip". Stripped repeatedly from the end so a
+# filename with several tags (the common case) loses all of them, not just
+# the last one.
+_TRAILING_TAG_RE = re.compile(r"\s*[\(\[][^\(\)\[\]]*[\)\]]\s*$")
+
+
+def _infer_title_from_filename(filename: str) -> str:
+    stem = Path(filename).stem
+    title = stem
+    while True:
+        stripped = _TRAILING_TAG_RE.sub("", title)
+        if stripped == title:
+            break
+        title = stripped
+    title = title.strip()
+    return title or stem
 
 
 def write_gamelist(config: Config, system_name: str) -> Path:
@@ -77,8 +101,8 @@ def write_gamelist(config: Config, system_name: str) -> Path:
             # Fall back to filename if nothing's been scraped yet, so the
             # game still shows up in the frontend rather than being omitted.
             title = meta["title"] if meta and meta["title"] else rom["rom_filename"]
-            if title == NONGAME_PLACEHOLDER_TITLE:
-                continue
+            if _NONGAME_PREFIX_RE.match(title):
+                title = _infer_title_from_filename(rom["rom_filename"])
 
             game_el = ET.SubElement(root, "game")
             ET.SubElement(game_el, "path").text = f"./{rom['rel_path']}"

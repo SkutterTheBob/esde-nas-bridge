@@ -145,6 +145,12 @@ class Config:
     # resources/systems/<os>/es_systems.xml, which gets overwritten on
     # every ES-DE update.
     es_de_home: Path | None = None
+    # Optional: a folder with one subfolder per possible system short name
+    # (e.g. ES-DE's own ROMs directory structure, or any folder mirroring
+    # it) -- used only to populate the TUI's Add System "system key"
+    # picker with real, correctly-spelled options instead of free-text
+    # entry. Never read for anything else; unset means free-text entry.
+    systems_reference_dir: Path | None = None
 
     def nas_source_for_system(self, system_name: str) -> NasSource:
         sys_cfg = self.systems[system_name]
@@ -239,4 +245,8 @@ def load_config(path: str | Path) -> Config:
         retroarch_core_dir=_strip_wrapping_quotes(raw["retroarch"]["core_dir"]),
         enabled_media_types=cache.get("enabled_media_types"),
         es_de_home=Path(_strip_wrapping_quotes(cache["es_de_home"])) if cache.get("es_de_home") else None,
+        systems_reference_dir=(
+            Path(_strip_wrapping_quotes(cache["systems_reference_dir"]))
+            if cache.get("systems_reference_dir") else None
+        ),
     )

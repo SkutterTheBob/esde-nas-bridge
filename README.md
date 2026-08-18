@@ -62,7 +62,23 @@ python -m src.cli generate-es-systems     # writes directly into ES-DE's own
 ```
 
 Restart ES-DE and you're done — no manual XML editing, no copy-pasting into
-the wrong file. `generate-es-systems` writes straight to ES-DE's own
+the wrong file.
+
+### Terminal UI (recommended for day-to-day use)
+
+The commands above are still the full picture, but once `.venv` exists and
+`config.yaml` has at least been copied from the example, day-to-day work
+(scanning, syncing, adding a system, cleaning up) is friendlier through the
+terminal UI: double-click `tui.bat` (Windows) or run `./tui.sh`
+(Linux/Mac) — no venv activation needed, same trick `launch.bat`/`launch.sh`
+already use. It's a menu/form layer over the exact same code the CLI calls,
+so both stay in sync by construction. Covers scan/import-skraper/scrape/
+publish/sync (per-system or all), add-system as a guided form, configure-media
+as a checklist, clean-media/prune-removed/reset-system with the same
+dry-run-first safety, and a Settings screen for the machine-specific paths
+mentioned below. The CLI remains fully available underneath for scripting.
+
+ `generate-es-systems` writes straight to ES-DE's own
 sanctioned override location (confirmed from ES-DE's docs: the bundled
 `resources/systems/<os>/es_systems.xml` must never be hand-edited, since
 it's overwritten on every ES-DE update; `custom_systems/es_systems.xml` is

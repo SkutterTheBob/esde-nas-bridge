@@ -25,18 +25,21 @@
 """
 from __future__ import annotations
 
-import re
-import shutil
 import sys
 from pathlib import Path
 
 import click
 
 from .config import load_config
+from .config_editor import append_to_yaml_section, build_system_yaml_block, update_or_insert_scalar
 from .db import connect, init_db, rom_filenames_missing_metadata
 from .es_systems_generator import generate_all, write_custom_systems
 from .gamelist_writer import write_all, write_gamelist
 from .indexer import find_stale_roms, scan_all, scan_system
+from .media_cleanup import human_size
+from .media_cleanup import clean_media as clean_media_logic
+from .media_cleanup import prune_removed as prune_removed_logic
+from .media_cleanup import reset_system as reset_system_logic
 from .media_types import ALL_MEDIA_TYPES, LARGE_MEDIA_TYPES
 from .rom_stubs import write_stubs_for_system
 from .scrapers.api_scraper import FatalScraperError, scrape_system
@@ -421,7 +424,7 @@ def configure_media(config_path):
         click.echo(f"Confirmed: {', '.join(enabled)}")
 
     yaml_line = f"enabled_media_types: [{', '.join(enabled)}]"
-    if _try_update_config_file(config_path, yaml_line):
+    if update_or_insert_scalar(config_path, "enabled_media_types", yaml_line, insert_after_key="roms_stub_root"):
         click.echo(f"\nUpdated {config_path}.")
     else:
         click.echo(f"\nCouldn't safely auto-update {config_path} (unexpected file structure).")
@@ -433,84 +436,6 @@ def configure_media(config_path):
         "it doesn't delete media already on disk. Re-run import-skraper/scrape "
         "to apply the new selection to your existing library."
     )
-
-
-def _try_update_config_file(config_path: str, new_line: str) -> bool:
-    """Surgically updates (or inserts) a single `enabled_media_types:` line
-    in config.yaml via text search-and-replace, rather than a full
-    YAML parse+re-dump -- PyYAML doesn't preserve comments/formatting on
-    round-trip, which would silently strip all the explanatory comments
-    from the user's config.yaml. Returns False (making no changes) if the
-    file doesn't look like the expected shape, rather than guessing.
-    """
-    path = Path(config_path)
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        return False
-
-    existing_pattern = re.compile(r"^[ \t]*enabled_media_types[ \t]*:.*$", re.MULTILINE)
-    if existing_pattern.search(text):
-        text = existing_pattern.sub(f"  {new_line}", text, count=1)
-    else:
-        anchor_pattern = re.compile(r"^([ \t]*roms_stub_root[ \t]*:.*)$", re.MULTILINE)
-        if not anchor_pattern.search(text):
-            return False
-        text = anchor_pattern.sub(lambda m: f"{m.group(1)}\n  {new_line}", text, count=1)
-
-    try:
-        path.write_text(text, encoding="utf-8")
-    except OSError:
-        return False
-    return True
-
-
-def _append_to_yaml_section(config_path: str, section_name: str, block: str) -> bool:
-    """Appends `block` (already-indented YAML lines) as the last entry
-    under a top-level `section_name:` mapping, via text manipulation
-    rather than a full YAML parse+re-dump (see _try_update_config_file's
-    docstring for why). Finds the section header, then the next top-level
-    (non-indented, non-blank, non-comment) line or end of file, and
-    inserts just before that boundary. Returns False without changing
-    anything if the section header isn't found.
-    """
-    path = Path(config_path)
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        return False
-
-    header_pattern = re.compile(rf"^{re.escape(section_name)}[ \t]*:[ \t]*$", re.MULTILINE)
-    header_match = header_pattern.search(text)
-    if not header_match:
-        return False
-
-    # Find the next top-level key after the section header: a line with no
-    # leading whitespace, ignoring blank lines and comments (both of which
-    # can legitimately appear between entries).
-    boundary_pattern = re.compile(r"^\S", re.MULTILINE)
-    search_start = header_match.end()
-    boundary_match = None
-    for m in boundary_pattern.finditer(text, search_start):
-        line_start = m.start()
-        line_end = text.find("\n", line_start)
-        line = text[line_start: line_end if line_end != -1 else len(text)]
-        if line.strip().startswith("#"):
-            continue
-        boundary_match = m
-        break
-
-    insert_at = boundary_match.start() if boundary_match else len(text)
-    # Ensure exactly one blank line's worth of separation before our block.
-    prefix = text[:insert_at].rstrip("\n") + "\n"
-    suffix = text[insert_at:]
-    text = prefix + block.rstrip("\n") + "\n" + suffix
-
-    try:
-        path.write_text(text, encoding="utf-8")
-    except OSError:
-        return False
-    return True
 
 
 @cli.command("add-system")
@@ -600,26 +525,15 @@ def add_system(config_path):
         default="", show_default=False,
     ).strip()
 
-    lines = [f"  {name}:"]
-    lines.append(f"    nas_source: {nas_source}")
-    lines.append(f'    subdir: "{subdir}"')
-    ext_list = ", ".join(f'"{e}"' for e in extensions)
-    lines.append(f"    extensions: [{ext_list}]")
-    if use_standalone:
-        lines.append("    emulator:")
-        lines.append(f"      binary: '{emulator_binary}'")
-        lines.append(f"      args: '{emulator_args}'")
-        if emulator_use_shell:
-            lines.append("      use_shell: true")
-    else:
-        lines.append(f'    retroarch_core: "{retroarch_core}"')
-    if screenscraper_id:
-        lines.append(f"    screenscraper_id: {screenscraper_id}")
-    if fullname:
-        lines.append(f'    fullname: "{fullname}"')
-    system_block = "\n".join(lines)
+    system_block = build_system_yaml_block(
+        name, nas_source, subdir, extensions,
+        retroarch_core=retroarch_core,
+        emulator_binary=emulator_binary, emulator_args=emulator_args,
+        emulator_use_shell=emulator_use_shell,
+        screenscraper_id=screenscraper_id, fullname=fullname,
+    )
 
-    if not _append_to_yaml_section(config_path, "systems", system_block):
+    if not append_to_yaml_section(config_path, "systems", system_block):
         click.echo("\nCouldn't safely auto-update config.yaml (unexpected file structure).")
         click.echo("Add this yourself under the `systems:` section:")
         click.echo(system_block)
@@ -629,7 +543,7 @@ def add_system(config_path):
 
     if skraper_path:
         skraper_line = f"  {name}: '{skraper_path}'"
-        if _append_to_yaml_section(config_path, "skraper_imports", skraper_line):
+        if append_to_yaml_section(config_path, "skraper_imports", skraper_line):
             click.echo(f"Added '{name}' under skraper_imports: too.")
         else:
             click.echo("\nCouldn't auto-add the skraper_imports entry -- add it yourself:")
@@ -679,14 +593,6 @@ def list_systems(config_path):
             click.echo()
 
 
-def _human_size(num_bytes: float) -> str:
-    for unit in ("B", "KB", "MB", "GB"):
-        if num_bytes < 1024:
-            return f"{num_bytes:.1f} {unit}"
-        num_bytes /= 1024
-    return f"{num_bytes:.1f} TB"
-
-
 @cli.command("clean-media")
 @CONFIG_OPTION
 @click.option("--system", default=None, help="Only clean this system (default: all)")
@@ -707,84 +613,39 @@ def clean_media(config_path, system, apply_changes):
         return
 
     systems = [system] if system else list(config.systems)
-    total_files, total_bytes = 0, 0
+    result = clean_media_logic(config, systems, apply_changes=apply_changes)
 
-    with connect(config.db_path) as conn:
-        for name in systems:
-            rows = conn.execute(
-                "SELECT media.id, media.kind, media.local_path FROM media "
-                "JOIN roms ON roms.id = media.rom_id WHERE roms.system = ?",
-                (name,),
-            ).fetchall()
-            to_remove = [r for r in rows if not config.is_media_enabled(r["kind"])]
-            if not to_remove:
-                continue
-
-            click.echo(f"=== {name} ===")
-            by_kind: dict[str, list] = {}
-            for row in to_remove:
-                by_kind.setdefault(row["kind"], []).append(row)
-
-            for kind in sorted(by_kind):
-                kind_rows = by_kind[kind]
-                kind_bytes = sum(
-                    Path(r["local_path"]).stat().st_size
-                    for r in kind_rows if Path(r["local_path"]).exists()
-                )
-                click.echo(f"  {kind}: {len(kind_rows)} files, {_human_size(kind_bytes)}")
-                total_files += len(kind_rows)
-                total_bytes += kind_bytes
-
-                if apply_changes:
-                    for row in kind_rows:
-                        p = Path(row["local_path"])
-                        if p.exists():
-                            p.unlink()
-                        conn.execute("DELETE FROM media WHERE id = ?", (row["id"],))
-                    kind_dir = config.media_root / name / kind
-                    if kind_dir.exists() and not any(kind_dir.iterdir()):
-                        kind_dir.rmdir()
+    for name, kind_summary in result.by_system.items():
+        click.echo(f"=== {name} ===")
+        for kind, (count, kind_bytes) in kind_summary.items():
+            click.echo(f"  {kind}: {count} files, {human_size(kind_bytes)}")
 
     click.echo()
-    if total_files == 0:
+    if result.total_files == 0:
         click.echo("Nothing to clean -- all cached media already matches your enabled_media_types selection.")
     elif apply_changes:
-        click.echo(f"Removed {total_files} files, freed {_human_size(total_bytes)}.")
+        click.echo(f"Removed {result.total_files} files, freed {human_size(result.total_bytes)}.")
     else:
         click.echo(
-            f"Would remove {total_files} files ({_human_size(total_bytes)}) -- re-run with --apply to actually delete."
+            f"Would remove {result.total_files} files ({human_size(result.total_bytes)}) "
+            "-- re-run with --apply to actually delete."
         )
 
 
-def _find_orphaned_media(config, systems: list[str]) -> list[tuple[str, Path]]:
-    """Walks cache.media_root/<system>/** for each given system and returns
-    every file there that isn't referenced by any current `media` row for
-    that system -- leftovers from a renamed ROM, a re-scrape that produced
-    a differently-named file, or a manual copy. Scoped strictly to
-    media_root/<system> per system (never anything outside it, e.g. other
-    systems ES-DE manages independently of this tool) and compared against
-    the DB as it stands when called -- if this runs after prune-removed's
-    own stale-ROM deletions in the same invocation, those already-handled
-    files are naturally excluded (their media rows are gone, but so are
-    the files themselves, deleted a few lines up)."""
-    orphans = []
-    with connect(config.db_path) as conn:
-        for name in systems:
-            system_media_root = config.media_root / name
-            if not system_media_root.is_dir():
-                continue
-            tracked = {
-                Path(row["local_path"]).resolve()
-                for row in conn.execute(
-                    "SELECT media.local_path FROM media JOIN roms ON roms.id = media.rom_id "
-                    "WHERE roms.system = ?",
-                    (name,),
-                ).fetchall()
-            }
-            for path in system_media_root.rglob("*"):
-                if path.is_file() and path.resolve() not in tracked:
-                    orphans.append((name, path))
-    return orphans
+def _print_orphan_sweep_result(orphans: list, orphans_bytes: int, applied: bool, removed_count: int = 0) -> None:
+    if not orphans:
+        click.echo("No orphaned media found -- every cached file under media_root matches a tracked ROM.")
+        return
+    click.echo(f"Orphaned media ({len(orphans)} files, {human_size(orphans_bytes)}):")
+    for name, p in orphans:
+        click.echo(f"  {name}: {p}")
+    if not applied:
+        click.echo(
+            f"\nWould remove {len(orphans)} orphaned file(s) ({human_size(orphans_bytes)}) "
+            "-- re-run with --apply to actually delete."
+        )
+    else:
+        click.echo(f"\nRemoved {removed_count} orphaned file(s), freed {human_size(orphans_bytes)}.")
 
 
 @cli.command("prune-removed")
@@ -827,28 +688,28 @@ def prune_removed(config_path, system, apply_changes, sweep_orphaned_media):
         _validate_system(config, system)
     systems = [system] if system else list(config.systems)
 
-    # (system_name, rom_row, is_config_drift) for every stale ROM, gathered
-    # up front so the confirmation gate below sees the full picture before
-    # anything actually gets deleted.
-    entries = []
-    for name in systems:
-        stale = find_stale_roms(config, name)
-        if not stale:
-            continue
+    preview = prune_removed_logic(
+        config, systems, apply_changes=False, sweep_orphaned_media=sweep_orphaned_media
+    )
+    entries = preview.entries
+    drift_entries = [e for e in entries if e.is_drift]
 
-        configured_extensions = set(config.systems[name].extensions)
+    for name in systems:
+        system_entries = [e for e in entries if e.system == name]
+        if not system_entries:
+            continue
         click.echo(f"=== {name} ===")
-        for rom in stale:
-            is_drift = Path(rom["rel_path"]).suffix.lower() not in configured_extensions
-            entries.append((name, rom, is_drift))
-            flag = "  [extension not in this system's current config -- NOT confirmed missing from the NAS]" if is_drift else ""
-            click.echo(f"  {rom['rel_path']}{flag}")
+        for e in system_entries:
+            flag = (
+                "  [extension not in this system's current config -- NOT confirmed missing from the NAS]"
+                if e.is_drift else ""
+            )
+            click.echo(f"  {e.rom['rel_path']}{flag}")
 
     click.echo()
     if not entries:
         click.echo("Nothing stale -- every indexed ROM was found on the last scan.")
     else:
-        drift_entries = [e for e in entries if e[2]]
         if drift_entries:
             click.echo(
                 f"WARNING: {len(drift_entries)} of {len(entries)} flagged ROM(s) have an "
@@ -860,80 +721,40 @@ def prune_removed(config_path, system, apply_changes, sweep_orphaned_media):
                 "intended, add the extension back, re-run `scan`, then `prune-removed` again --"
                 " they'll no longer show as stale."
             )
-            for name, rom, _ in drift_entries:
-                click.echo(f"  {name}: {rom['rel_path']}")
+            for e in drift_entries:
+                click.echo(f"  {e.system}: {e.rom['rel_path']}")
             click.echo()
 
         if not apply_changes:
             click.echo(f"Would remove {len(entries)} stale ROM(s) -- re-run with --apply to actually delete.")
-        else:
-            if drift_entries and not click.confirm(
-                f"Proceed and remove all {len(entries)} flagged ROM(s) anyway, including the "
-                f"{len(drift_entries)} flagged above as possibly still present on the NAS?",
-                default=False,
-            ):
-                click.echo("Aborted -- nothing was removed.")
-                return
 
-            for name, rom, _ in entries:
-                with connect(config.db_path) as conn:
-                    media_rows = conn.execute(
-                        "SELECT local_path FROM media WHERE rom_id = ?", (rom["id"],)
-                    ).fetchall()
+    if apply_changes and entries and drift_entries and not click.confirm(
+        f"Proceed and remove all {len(entries)} flagged ROM(s) anyway, including the "
+        f"{len(drift_entries)} flagged above as possibly still present on the NAS?",
+        default=False,
+    ):
+        click.echo("Aborted -- nothing was removed.")
+        return
 
-                stub_path = config.roms_stub_root / name / rom["rel_path"]
-                if stub_path.exists():
-                    stub_path.unlink()
-                for m in media_rows:
-                    p = Path(m["local_path"])
-                    if p.exists():
-                        p.unlink()
-
-                with connect(config.db_path) as conn:
-                    # Cascades to metadata + media DB rows automatically
-                    # (ON DELETE CASCADE, see db.py's schema).
-                    conn.execute("DELETE FROM roms WHERE id = ?", (rom["id"],))
-
-            click.echo(f"Removed {len(entries)} stale ROM(s) and their cached data.")
+    result = None
+    if apply_changes:
+        result = prune_removed_logic(
+            config, systems, apply_changes=True, sweep_orphaned_media=sweep_orphaned_media
+        )
+        if entries:
+            click.echo(f"Removed {result.removed_count} stale ROM(s) and their cached data.")
             click.echo("Run `publish` to update gamelist.xml so ES-DE stops showing these.")
 
     if not sweep_orphaned_media:
         return
 
-    # Independent of the stale-ROM pass above: files sitting under
-    # media_root/<system> that no `media` row references at all, tracked
-    # ROM or not (e.g. left behind by a rename, or a re-scrape that wrote
-    # a differently-named file over the old one without cleaning it up).
-    # Run after the stale-ROM deletions above so a file removed by that
-    # pass isn't double-counted here.
     click.echo()
-    orphans = _find_orphaned_media(config, systems)
-    if not orphans:
-        click.echo("No orphaned media found -- every cached file under media_root matches a tracked ROM.")
-        return
-
-    total_bytes = sum(p.stat().st_size for _, p in orphans if p.exists())
-    click.echo(f"Orphaned media ({len(orphans)} files, {_human_size(total_bytes)}):")
-    for name, p in orphans:
-        click.echo(f"  {name}: {p}")
-
-    if not apply_changes:
-        click.echo(
-            f"\nWould remove {len(orphans)} orphaned file(s) ({_human_size(total_bytes)}) "
-            "-- re-run with --apply to actually delete."
+    if apply_changes:
+        _print_orphan_sweep_result(
+            result.orphans, result.orphans_bytes, applied=True, removed_count=result.orphans_removed_count
         )
-        return
-
-    kind_dirs = set()
-    for _, p in orphans:
-        if p.exists():
-            p.unlink()
-        kind_dirs.add(p.parent)
-    for d in kind_dirs:
-        if d.exists() and not any(d.iterdir()):
-            d.rmdir()
-
-    click.echo(f"\nRemoved {len(orphans)} orphaned file(s), freed {_human_size(total_bytes)}.")
+    else:
+        _print_orphan_sweep_result(preview.orphans, preview.orphans_bytes, applied=False)
 
 
 @cli.command("reset-system")
@@ -957,51 +778,26 @@ def reset_system(config_path, system, apply_changes):
     config = load_config(config_path)
     _validate_system(config, system)
 
-    with connect(config.db_path) as conn:
-        rom_count = conn.execute(
-            "SELECT COUNT(*) FROM roms WHERE system = ?", (system,)
-        ).fetchone()[0]
-        media_rows = conn.execute(
-            "SELECT media.local_path FROM media "
-            "JOIN roms ON roms.id = media.rom_id WHERE roms.system = ?",
-            (system,),
-        ).fetchall()
-
-    media_bytes = sum(
-        Path(r["local_path"]).stat().st_size
-        for r in media_rows if Path(r["local_path"]).exists()
-    )
-
-    stub_dir = config.roms_stub_root / system
-    media_dir = config.media_root / system
-    gamelist_path = config.gamelists_root / system / "gamelist.xml"
-    stub_count = sum(1 for p in stub_dir.rglob("*") if p.is_file()) if stub_dir.exists() else 0
-
-    if rom_count == 0 and stub_count == 0 and not media_rows and not gamelist_path.exists():
+    preview = reset_system_logic(config, system, apply_changes=False)
+    if (preview.rom_count == 0 and preview.stub_count == 0
+            and preview.media_count == 0 and not preview.gamelist_present):
         click.echo(f"'{system}': nothing cached locally -- already clean.")
         return
 
     click.echo(f"=== {system} ===")
-    click.echo(f"  {rom_count} indexed ROM(s) (DB row + cascaded metadata/media rows)")
-    click.echo(f"  {len(media_rows)} cached media file(s), {_human_size(media_bytes)}")
-    click.echo(f"  {stub_count} stub file(s) under {stub_dir}")
-    click.echo(f"  gamelist.xml: {'present' if gamelist_path.exists() else 'not present'} ({gamelist_path})")
+    click.echo(f"  {preview.rom_count} indexed ROM(s) (DB row + cascaded metadata/media rows)")
+    click.echo(f"  {preview.media_count} cached media file(s), {human_size(preview.media_bytes)}")
+    click.echo(f"  {preview.stub_count} stub file(s) under {preview.stub_dir}")
+    click.echo(
+        f"  gamelist.xml: {'present' if preview.gamelist_present else 'not present'} ({preview.gamelist_path})"
+    )
 
     if not apply_changes:
         click.echo(f"\nWould wipe all of the above -- re-run with --apply to actually delete.")
         click.echo(f"config.yaml is untouched -- '{system}' stays configured for the next sync.")
         return
 
-    with connect(config.db_path) as conn:
-        conn.execute("DELETE FROM roms WHERE system = ?", (system,))  # cascades to metadata/media rows
-
-    if stub_dir.exists():
-        shutil.rmtree(stub_dir)
-    if media_dir.exists():
-        shutil.rmtree(media_dir)
-    if gamelist_path.exists():
-        gamelist_path.unlink()
-
+    reset_system_logic(config, system, apply_changes=True)
     click.echo(f"\nWiped all local data for '{system}'.")
     click.echo(f"Run `sync --system {system}` (or scan + import-skraper + publish) to rebuild it.")
 

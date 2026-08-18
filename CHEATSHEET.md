@@ -4,6 +4,11 @@ Quick reference for day-to-day use. For the full story on *why* things work
 this way, see [README.md](README.md); for what's actually been verified on
 real hardware vs. only fixture-tested, see [TESTING.md](TESTING.md).
 
+**Prefer a menu/form UI over typing commands?** Double-click `tui.bat`
+(Windows) or run `./tui.sh` (Linux/Mac) — no venv activation needed, and it
+calls the exact same code as the CLI commands below. Everything past this
+point describes the CLI directly, which the TUI is a layer over.
+
 ## What this is, in one paragraph
 
 A local caching layer between a NAS-hosted ROM library and ES-DE. It indexes
@@ -159,6 +164,8 @@ cache:
   roms_stub_root: '.\cache\roms_stub'               # local only, not ES-DE's folder
   # es_de_home: '...'          # optional, only if gamelists_root isn't "<home>/gamelists"
   # enabled_media_types: [covers, screenshots, ...]  # omit = cache everything
+  # systems_reference_dir: '...'  # optional, TUI-only: a folder with one subfolder
+                                   # per valid system code, for Add System's picker
 
 nas:
   - name: main-nas

@@ -45,9 +45,14 @@ if ($isNewConfig) {
     Write-Host "    at the same NAS -- consider copying these sections from a working"
     Write-Host "    machine's config.yaml rather than retyping them"
     Write-Host ""
+    Write-Host "(Or skip hand-editing config.yaml entirely -- run tui.bat and use its"
+    Write-Host "Settings screen for the machine-specific paths above instead.)"
+    Write-Host ""
 }
 
-Write-Host "Once config.yaml is ready, run:"
+Write-Host "Once config.yaml is ready, either:"
+Write-Host "  tui.bat                              (terminal UI -- menus/forms, recommended)"
+Write-Host "or the underlying CLI directly:"
 Write-Host "  python -m src.cli sync"
 Write-Host "  python -m src.cli generate-es-systems"
 Write-Host ""

@@ -1,0 +1,44 @@
+/* Global styles for the esde-nas-bridge TUI. */
+
+Screen {
+    align: center top;
+}
+
+.screen-title {
+    text-style: bold;
+    padding: 1 2 0 2;
+}
+
+.screen-subtitle {
+    color: $text-muted;
+    padding: 0 2 1 2;
+}
+
+.button-row {
+    height: auto;
+    padding: 1 2;
+}
+
+.button-row Button {
+    margin-right: 1;
+}
+
+.warning-button {
+    background: $error;
+}
+
+.field-label {
+    padding-top: 1;
+}
+
+.error-box {
+    border: round $error;
+    color: $error;
+    padding: 1 2;
+    margin: 1 2;
+}
+
+.hint {
+    color: $text-muted;
+    padding: 0 2;
+}
