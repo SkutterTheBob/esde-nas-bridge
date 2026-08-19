@@ -212,15 +212,24 @@ class AddSystemScreen(Screen):
                 # below the checkbox with nothing scrolling the form to show
                 # it, so a user already scrolled down elsewhere in this long
                 # form can check the box and see no visible change at all.
-                # scroll_end (not scroll_visible/scroll_to_widget on the
-                # field itself -- confirmed unreliable here, presumably
-                # because the container's virtual size hasn't caught up
-                # with its display flip yet) reliably lands the newly
-                # revealed section, and the rest of the form below it, in
-                # view. Deferred to call_after_refresh so it runs once the
-                # layout has actually re-run after the display change above.
+                # scroll_end() (an earlier attempt here) scrolls to the very
+                # bottom of the WHOLE form, past the fields below the
+                # emulator section (fullname/screenscraper_id/skraper_path/
+                # buttons) -- on a short-enough terminal that tail alone can
+                # fill the viewport, pushing the actual emulator fields back
+                # OFF the top of the screen. Confirmed via a headless
+                # Textual pilot test at 80x10: scroll_end() left the path
+                # field's region at y=-4 (not in view) while pinning the
+                # section itself to the TOP of the viewport (top=True) kept
+                # it visible at every terminal size tested, since it never
+                # scrolls further than needed to reveal this section.
+                # Deferred to call_after_refresh so it runs once the layout
+                # has actually re-run after the display change above --
+                # calling it immediately can hit a zero-size region and
+                # silently no-op.
                 self.call_after_refresh(
-                    self.query_one(VerticalScroll).scroll_end, animate=False
+                    self.query_one("#emulator-fields").scroll_visible,
+                    top=True, animate=False, immediate=True,
                 )
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
