@@ -227,10 +227,18 @@ class AddSystemScreen(Screen):
                 # has actually re-run after the display change above --
                 # calling it immediately can hit a zero-size region and
                 # silently no-op.
-                self.call_after_refresh(
-                    self.query_one("#emulator-fields").scroll_visible,
-                    top=True, animate=False, immediate=True,
-                )
+                def _reveal() -> None:
+                    self.query_one("#emulator-fields").scroll_visible(
+                        top=True, animate=False, immediate=True
+                    )
+                    # Belt-and-suspenders against a stale partial repaint on
+                    # terminals that don't cleanly redraw a region whose
+                    # `display` just flipped True in the same tick as a
+                    # scroll -- forces every cell to be redrawn, not just
+                    # the ones Textual's diffing thinks changed.
+                    self.screen.refresh(layout=True)
+
+                self.call_after_refresh(_reveal)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "back":
