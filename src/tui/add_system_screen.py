@@ -231,12 +231,20 @@ class AddSystemScreen(Screen):
                     self.query_one("#emulator-fields").scroll_visible(
                         top=True, animate=False, immediate=True
                     )
-                    # Belt-and-suspenders against a stale partial repaint on
-                    # terminals that don't cleanly redraw a region whose
-                    # `display` just flipped True in the same tick as a
-                    # scroll -- forces every cell to be redrawn, not just
-                    # the ones Textual's diffing thinks changed.
-                    self.screen.refresh(layout=True)
+                    # Newly-shown content here (a widget whose ancestor's
+                    # `display` just flipped True) doesn't reliably reach
+                    # some terminals (confirmed: Windows Terminal from the
+                    # Microsoft Store) -- Textual's own compositor computes
+                    # the correct layout (confirmed via headless testing),
+                    # but the partial-update escape sequences it sends
+                    # apparently don't get painted; a real window resize
+                    # does fix it, because that goes through a full
+                    # Screen._refresh_layout() reflow rather than a partial
+                    # update. screen.refresh(layout=True) alone (tried
+                    # first) does NOT trigger that same full reflow and
+                    # didn't help -- calling _refresh_layout() directly
+                    # forces the exact code path a real resize uses.
+                    self.screen._refresh_layout(self.screen.size)
 
                 self.call_after_refresh(_reveal)
 
