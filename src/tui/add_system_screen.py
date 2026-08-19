@@ -212,41 +212,18 @@ class AddSystemScreen(Screen):
                 # below the checkbox with nothing scrolling the form to show
                 # it, so a user already scrolled down elsewhere in this long
                 # form can check the box and see no visible change at all.
-                # scroll_end() (an earlier attempt here) scrolls to the very
-                # bottom of the WHOLE form, past the fields below the
-                # emulator section (fullname/screenscraper_id/skraper_path/
-                # buttons) -- on a short-enough terminal that tail alone can
-                # fill the viewport, pushing the actual emulator fields back
-                # OFF the top of the screen. Confirmed via a headless
-                # Textual pilot test at 80x10: scroll_end() left the path
-                # field's region at y=-4 (not in view) while pinning the
-                # section itself to the TOP of the viewport (top=True) kept
-                # it visible at every terminal size tested, since it never
-                # scrolls further than needed to reveal this section.
-                # Deferred to call_after_refresh so it runs once the layout
-                # has actually re-run after the display change above --
+                # top=True pins the section to the top of the viewport
+                # rather than scrolling to the form's end, so it can't be
+                # pushed back off-screen by the fields below it (fullname/
+                # screenscraper_id/skraper_path/buttons) on a short
+                # terminal. Deferred to call_after_refresh so it runs once
+                # the layout has re-run after the display change above --
                 # calling it immediately can hit a zero-size region and
                 # silently no-op.
-                def _reveal() -> None:
-                    self.query_one("#emulator-fields").scroll_visible(
-                        top=True, animate=False, immediate=True
-                    )
-                    # Newly-shown content here (a widget whose ancestor's
-                    # `display` just flipped True) doesn't reliably reach
-                    # some terminals (confirmed: Windows Terminal from the
-                    # Microsoft Store) -- Textual's own compositor computes
-                    # the correct layout (confirmed via headless testing),
-                    # but the partial-update escape sequences it sends
-                    # apparently don't get painted; a real window resize
-                    # does fix it, because that goes through a full
-                    # Screen._refresh_layout() reflow rather than a partial
-                    # update. screen.refresh(layout=True) alone (tried
-                    # first) does NOT trigger that same full reflow and
-                    # didn't help -- calling _refresh_layout() directly
-                    # forces the exact code path a real resize uses.
-                    self.screen._refresh_layout(self.screen.size)
-
-                self.call_after_refresh(_reveal)
+                self.call_after_refresh(
+                    self.query_one("#emulator-fields").scroll_visible,
+                    top=True, animate=False,
+                )
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "back":

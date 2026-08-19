@@ -19,6 +19,19 @@ Screen {
     padding: 1 2;
 }
 
+/* Vertical's own default is height: 1fr (an "expanding" container sized
+   for a fixed-size parent) with overflow: hidden -- inside a
+   VerticalScroll that has no fixed total height to divide fractionally,
+   this computes to a degenerate ~1 row and clips away everything past it,
+   regardless of what the children's own positions report. Confirmed via
+   AddSystemScreen's retroarch-fields/emulator-fields: content toggled
+   into view via `display` would report correct per-child geometry yet
+   render as if genuinely 1 row tall. auto sizes the container to its
+   actual content instead, same fix already applied above to .button-row. */
+#retroarch-fields, #emulator-fields {
+    height: auto;
+}
+
 .button-row Button {
     margin-right: 1;
 }
